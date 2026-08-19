@@ -148,6 +148,11 @@ inline cl::opt<bool> noUnified(
     "no-unified",
     cl::desc("Lower each core independently, against its own clone of the "
              "design (negates --unified; the default)"));
+inline cl::opt<bool> noAutoReservedData(
+    "no-auto-reserved-data",
+    cl::desc("Skip auto-measuring reserved_data_size from each core's "
+             "link_files objects; cores without an explicit value keep "
+             "reserving nothing"));
 inline cl::opt<bool> noAutoStackSize(
     "no-auto-stack-size",
     cl::desc("Skip validating each core's stack_size against its call "

@@ -5,10 +5,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Shared vocabulary for a core tile's data memory and object layout, used by
-// the several places that have to agree about them: the buffer allocator
-// (AIEAssignBuffers), the linker script emitter (AIETargetLdScript), core
-// outlining (AIECoreToStandard), and aiecc's stack analysis.
+// Shared vocabulary for a core tile's data memory layout, used by the places
+// that have to agree about it: the buffer allocator (AIEAssignBuffers) and
+// the linker script emitter (AIETargetLdScript).
+//
+// Names shared between the dialect and the aiecc driver -- the outlined core
+// frame symbol, the computed-stack-requirement attribute -- live in
+// AIECoreSymbols.h instead; they are naming contracts, not memory layout.
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,34 +20,12 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cstdint>
-#include <string>
 #include <utility>
 
 namespace xilinx::AIE {
-
-// Stack requirement aiecc's call-graph analysis computed for a core, stamped
-// on the CoreOp so the buffer allocator's memory-map diagnostics can show it
-// next to the stack region. aiecc erases it again before the module is handed
-// on, so it never reaches user-visible IR.
-inline constexpr llvm::StringLiteral kComputedStackRequirementAttrName =
-    "aiecc.computed_stack_requirement";
-
-// Name of the top-level function AIECoreToStandard outlines a CoreOp's body
-// into. The canonical definition is there (where the function is actually
-// created); every other reader of a compiled core object -- aiecc's
-// post-build stack-size check reads this function's own frame size back out
-// of the object -- must agree on the same name, so they share this rather
-// than each formatting "core_<col>_<row>" independently.
-inline std::string coreFrameSymbolName(int col, int row) {
-  std::string name;
-  llvm::raw_string_ostream(name) << "core_" << col << "_" << row;
-  return name;
-}
 
 // A half-open [start, start + size) run of bytes.
 struct MemoryRun {

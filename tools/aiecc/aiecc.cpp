@@ -681,12 +681,12 @@ buildMainGraph(mlir::MLIRContext &context, Graph &g,
         return populateDefaultStackSize(mod.get(), stackSize);
       });
 
-  // The stack-size check below walks each core's link_files objects, so
-  // link_files has to exist before it runs. aie-assign-core-link-files moves
-  // here from inside getInputWithAddressesPipeline, where it used to sit
-  // after buffer address assignment. It's a pure call-graph analysis over
-  // func.func/func.call -- nothing about it depends on addresses, so moving
-  // it earlier is safe.
+  // Both analyses below walk each core's link_files objects, so link_files has
+  // to exist before either runs. aie-assign-core-link-files moves here from
+  // inside getInputWithAddressesPipeline, where it used to sit after buffer
+  // address assignment. It's a pure call-graph analysis over
+  // func.func/func.call -- nothing about it depends on addresses, so moving it
+  // earlier is safe.
   auto &withLinkFiles = withDefaultStackSize.map<ModRef>(
       "with_link_files.mlir",
       PassPipeline{&context, [](mlir::MLIRContext *ctx, mlir::ModuleOp) {
@@ -696,12 +696,25 @@ buildMainGraph(mlir::MLIRContext &context, Graph &g,
                      return pm;
                    }});
 
+  // Measure each core's link_files objects and auto-populate
+  // reserved_data_size where the user hasn't set it explicitly. File I/O
+  // (opening the linked objects) happens here in the driver, not inside an
+  // MLIR pass -- the same reasoning as resolveExternalPath's other callers.
+  auto &withReservedData = withLinkFiles.map<ModRef>(
+      "reserved_data.mlir",
+      [inputFile, workDirStr,
+       skip = noAutoReservedData.getValue()](const ModRef &mod) -> ModRef {
+        if (skip)
+          return ModRef(mod.get().clone());
+        return populateReservedDataSize(mod.get(), inputFile, workDirStr);
+      });
+
   // Validate each core's stack_size against what its call tree actually
-  // needs, from the link_files objects the edge above populated. Unlike the
-  // other analysis edges this one can fail the whole run: a cycle, or an
+  // needs, from the same link_files objects reserved_data_size just measured.
+  // Unlike that edge this one can fail the whole run: a cycle, or an
   // unmeasurable symbol with no stack_size_override, is an error rather than
   // a warning -- see checkStackSizeRequirements.
-  auto &withStackSizeChecked = withLinkFiles.map<ModRef>(
+  auto &withStackSizeChecked = withReservedData.map<ModRef>(
       "stack_size_checked.mlir",
       [inputFile, workDirStr, skip = noAutoStackSize.getValue()](
           const Item<ModRef> &in, Item<ModRef> &out) -> mlir::LogicalResult {

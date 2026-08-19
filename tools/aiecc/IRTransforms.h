@@ -380,6 +380,116 @@ inline mlir::LogicalResult checkStackSizeRequirements(mlir::ModuleOp module,
   return result;
 }
 
+// Collect the deduplicated merge-mode link artifacts across every core of
+// `deviceOp`, for the unified-object path where the device's cores share one
+// LLVM module that is llvm-linked once. Duplicate references across cores
+// merge cleanly (the kernels are linkonce_odr) and each is inlined into its
+// caller.
+//
+// Fails if any path is merge-mode on one core and an ordinary link input on
+// another core of the same device: with one shared module the merged copy and
+// the object-linked copy would both define the kernel's symbols. The pass that
+// builds these lists normally diagnoses that, but aiecc can also be handed
+// pre-populated IR, so the check is repeated here.
+inline mlir::LogicalResult
+collectDeviceIRLinkFiles(xilinx::AIE::DeviceOp deviceOp,
+                         llvm::StringRef inputFile, llvm::StringRef workDir,
+                         std::vector<std::string> &files) {
+  files.clear();
+  llvm::StringSet<> merged;
+  deviceOp.walk([&](xilinx::AIE::CoreOp coreOp) {
+    for (auto &f : collectCoreIRLinkFiles(coreOp, inputFile, workDir))
+      if (merged.insert(f).second)
+        files.push_back(std::move(f));
+  });
+
+  mlir::LogicalResult result = mlir::success();
+  deviceOp.walk([&](xilinx::AIE::CoreOp coreOp) {
+    auto filesAttr = coreOp.getLinkFiles();
+    if (!filesAttr)
+      return;
+    for (auto f : filesAttr->getAsRange<mlir::StringAttr>()) {
+      if (!merged.contains(
+              resolveExternalPath(f.getValue(), inputFile, workDir)))
+        continue;
+      coreOp.emitError() << "link artifact '" << f.getValue()
+                         << "' is listed in link_files here but requested with "
+                            "link_with_mode = \"merge\" elsewhere in this "
+                            "device; a path cannot be both llvm-linked into "
+                            "the shared core module and object-linked, or its "
+                            "symbols are defined twice";
+      result = mlir::failure();
+    }
+  });
+  return result;
+}
+
+// Empirically, the sum of a core's link_files objects' .data/.rodata/.bss
+// undercounts the final linked ELF's usage by a small, roughly fixed amount
+// (~37 bytes observed on a real design) contributed by runtime objects the
+// link implicitly pulls in beyond what link_files lists. Pad by a comfortable
+// multiple of that so auto-measurement stays in the safe direction
+// (over-reserve) without needing per-design tuning; revisit if a design shows
+// this isn't enough.
+constexpr int64_t kReservedDataMargin = 256;
+
+// Clone `src` and populate `reserved_data_size` on every CoreOp that doesn't
+// already carry it explicitly (an explicit value, including 0, always wins --
+// this pass never touches it), measured from the `.data`/`.rodata`/`.bss` size
+// of the core's `link_files` objects (see measureObjectDataSectionBytes).
+// Requires aie-assign-core-link-files to have already run so `link_files` is
+// populated.
+//
+// `link_merge_files` (bitcode merged into the core's own module before
+// codegen, see collectCoreIRLinkFiles) is deliberately not measured: its
+// contribution only exists after the core's own compile, which happens much
+// later in the pipeline than this runs.
+//
+// A core with no link_files, or whose link_files entries are all
+// unmeasurable (archives, bitcode, missing files), is left untouched --
+// absent still means "unknown, reserve nothing", same as today.
+inline mlir::OwningOpRef<mlir::ModuleOp>
+populateReservedDataSize(mlir::ModuleOp src, llvm::StringRef inputFile,
+                         llvm::StringRef workDir) {
+  mlir::OwningOpRef<mlir::ModuleOp> cloned = src.clone();
+  cloned->walk([&](xilinx::AIE::CoreOp coreOp) {
+    if (coreOp.getReservedDataSizeAttr())
+      return;
+    auto filesAttr = coreOp.getLinkFiles();
+    if (!filesAttr)
+      return;
+    int64_t total = 0;
+    bool measuredAny = false;
+    std::vector<std::string> skipped;
+    for (auto f : filesAttr->getAsRange<mlir::StringAttr>()) {
+      std::string resolved =
+          resolveExternalPath(f.getValue(), inputFile, workDir);
+      if (auto bytes = measureObjectDataSectionBytes(resolved)) {
+        total += *bytes;
+        measuredAny = true;
+      } else {
+        skipped.push_back(f.getValue().str());
+      }
+    }
+    if (!measuredAny)
+      return;
+    total += kReservedDataMargin;
+    if (!skipped.empty()) {
+      auto diag = coreOp.emitWarning()
+                  << "reserved_data_size auto-measured as " << total
+                  << " bytes from link_files, but could not inspect "
+                  << skipped.size() << " artifact(s) (archive, bitcode, or "
+                  << "unreadable), so this estimate may be incomplete: ";
+      for (size_t i = 0; i < skipped.size(); ++i)
+        diag << (i ? ", " : "") << skipped[i];
+    }
+    mlir::Builder b(cloned->getContext());
+    coreOp.setReservedDataSizeAttr(
+        b.getI32IntegerAttr(static_cast<int32_t>(total)));
+  });
+  return cloned;
+}
+
 // Clone `src` and replace each matched CoreOp with a stub that carries
 // `elf_file = <path>` and an empty body (verifier requires empty body when
 // elf_file is set).
@@ -1037,9 +1147,11 @@ inline std::unique_ptr<mlir::PassManager> getInputWithAddressesPipeline(
   mlir::OpPassManager &dpm2 = pm->nest<DeviceOp>();
   AIEAssignBufferAddressesOptions bufOpts;
   bufOpts.clAllocScheme = allocScheme.str();
-  // aie-assign-core-link-files ran earlier (see the `with_link_files.mlir`
-  // graph edge in buildMainGraph): its link_files attribute must exist before
-  // the stack-size check, which runs ahead of address assignment.
+  // aie-assign-core-link-files ran earlier (see the `with_link_files.mlir` /
+  // `reserved_data.mlir` graph edges in buildMainGraph): its link_files
+  // attribute must exist before this point so reserved_data_size can be
+  // auto-measured and the stack-size check can run, both ahead of address
+  // assignment.
   dpm2.addPass(createAIEAssignBufferAddressesPass(bufOpts));
   dpm2.addPass(createAIEVectorTransferLoweringPass());
   pm->addPass(xilinx::AIEX::createAIESCFToControlFlowPass());
