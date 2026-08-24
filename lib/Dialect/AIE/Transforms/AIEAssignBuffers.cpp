@@ -327,10 +327,12 @@ static bool basicAllocation(TileOp tile) {
 //===----------------------------------------------------------------------===//
 // SimpleBankAwareAllocation : round-robin each alloc over available banks
 //===----------------------------------------------------------------------===//
+namespace {
 using BankLimits = struct BankLimits {
   int64_t startAddr;
   int64_t endAddr;
 };
+} // namespace
 
 // Function that given a number of banks and their size, computes
 // the start and end addresses for each bank and fills in the entry
@@ -690,7 +692,9 @@ static void deAllocationBuffers(SmallVectorImpl<BufferOp> &buffers,
 // worth retrying with another scheme; a constraint the user wrote and that
 // cannot be honoured must not be, because the other scheme ignores mem_bank
 // and would silently place the buffer in a different bank than was asked for.
+namespace {
 enum class BankAwareResult { Success, OutOfMemory, ConstraintUnsatisfiable };
+} // namespace
 
 static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
   auto device = tile->getParentOfType<AIE::DeviceOp>();
@@ -918,6 +922,7 @@ static LogicalResult checkBufferScope(BufferOp buffer, DeviceOp device) {
   return success();
 }
 
+namespace {
 struct AIEAssignBufferAddressesPass
     : xilinx::AIE::impl::AIEAssignBufferAddressesBase<
           AIEAssignBufferAddressesPass> {
@@ -992,6 +997,7 @@ struct AIEAssignBufferAddressesPass
     }
   }
 };
+} // namespace
 
 std::unique_ptr<OperationPass<DeviceOp>>
 AIE::createAIEAssignBufferAddressesPass() {
