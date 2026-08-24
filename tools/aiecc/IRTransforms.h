@@ -424,13 +424,9 @@ collectDeviceIRLinkFiles(xilinx::AIE::DeviceOp deviceOp,
   return result;
 }
 
-// Empirically, the sum of a core's link_files objects' .data/.rodata/.bss
-// undercounts the final linked ELF's usage by a small, roughly fixed amount
-// (~37 bytes observed on a real design) contributed by runtime objects the
-// link implicitly pulls in beyond what link_files lists. Pad by a comfortable
-// multiple of that so auto-measurement stays in the safe direction
-// (over-reserve) without needing per-design tuning; revisit if a design shows
-// this isn't enough.
+// Runtime objects the link pulls in beyond link_files add ~37 bytes on a real
+// design; pad by a comfortable multiple so auto-measurement stays over-, not
+// under-reserving, without per-design tuning.
 constexpr int64_t kReservedDataMargin = 256;
 
 // Clone `src` and populate `reserved_data_size` on every CoreOp that doesn't
@@ -474,6 +470,13 @@ populateReservedDataSize(mlir::ModuleOp src, llvm::StringRef inputFile,
     if (!measuredAny)
       return;
     total += kReservedDataMargin;
+    if (total > INT32_MAX) {
+      coreOp.emitWarning()
+          << "reserved_data_size auto-measured as " << total
+          << " bytes from link_files, which does not fit in the attribute's "
+             "i32; leaving it unset rather than truncating to a bogus value";
+      return;
+    }
     if (!skipped.empty()) {
       auto diag = coreOp.emitWarning()
                   << "reserved_data_size auto-measured as " << total

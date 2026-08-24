@@ -193,15 +193,13 @@ inline std::vector<std::string> parseBcfIncludeFiles(llvm::StringRef bcf) {
 
 // Sum the size of every section in `path` whose name matches the linker
 // script's `*(.data*)`/`*(.rodata*)`/`*(.bss*)` globs (see
-// AIETargetLdScript.cpp) -- i.e. what a core's compiled sections actually
-// need from the region a `reserved_data_size` reservation carves out.
-//
-// Returns nullopt if `path` isn't a plain relocatable object file: an archive
-// or bitcode input isn't an ObjectFile at all (createObjectFile fails), and a
-// shared object fails the isRelocatableObject check. Summing an archive's
-// members would over-count by everything the linker doesn't actually pull in
-// for this link, which is not the safe direction to be wrong in, so those
-// inputs are left unmeasured rather than approximated.
+// AIETargetLdScript.cpp) -- what a core's compiled sections actually need
+// from the region a `reserved_data_size` reservation carves out. Returns
+// nullopt for anything but a plain relocatable object (an archive or bitcode
+// input isn't an ObjectFile at all; a shared object fails
+// isRelocatableObject): summing an archive's members would over-count by
+// whatever the linker doesn't actually pull in, which is the wrong direction
+// to be wrong in, so those inputs are left unmeasured rather than approximated.
 inline std::optional<int64_t>
 measureObjectDataSectionBytes(llvm::StringRef path) {
   auto binOrErr = llvm::object::ObjectFile::createObjectFile(path);
