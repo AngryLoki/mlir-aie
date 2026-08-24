@@ -40,6 +40,34 @@ static std::optional<int64_t> getComputedStackRequirement(TileOp tile) {
   return std::nullopt;
 }
 
+// The two numbers every allocation scheme needs before it can place anything:
+// how much data memory the tile has, and what alignment its load/store bus
+// requires. A memtile and a compute tile ask the target model for these
+// differently.
+struct TileMemoryLimits {
+  int64_t maxDataMemorySize;
+  uint32_t tileAlignBitWidth;
+};
+static TileMemoryLimits tileMemoryLimits(TileOp tile,
+                                         const AIETargetModel &targetModel) {
+  if (tile.isMemTile())
+    return {targetModel.getMemTileSize(),
+            targetModel.getMemTileLoadStoreBusWidth()};
+  return {targetModel.getLocalMemorySize(),
+          targetModel.getComputeTileLoadStoreBusWidth()};
+}
+
+// Every buffer here must already have an address: called once allocation has
+// either succeeded or is about to be reported failed, to put the memory map
+// and the final overlap/overflow checks in address order.
+static void sortBuffersByAddress(SmallVectorImpl<BufferOp> &buffers) {
+  llvm::sort(buffers, [](BufferOp a, BufferOp b) {
+    assert(a.getAddress().has_value() && "buffer must have address assigned");
+    assert(b.getAddress().has_value() && "buffer must have address assigned");
+    return a.getAddress().value() < b.getAddress().value();
+  });
+}
+
 // Free run left for the core's own sections, computed the way
 // AIETargetLdScript computes the `data` region it hands the core compiler.
 static int64_t coreFreeRun(int64_t memSize, int64_t stackSize,
@@ -154,6 +182,20 @@ static bool checkAndPrintReservedData(TileOp tile, int64_t freeRun,
   return false;
 }
 
+// One line of a memory-map diagnostic: "<indent>name \t: 0xADDR-0xEND \t(N
+// bytes)<suffix>". Shared by the two diagnostics below so their formatting
+// can't drift apart.
+static void printMemoryMapEntry(Diagnostic &note, StringRef name,
+                                int64_t address, int64_t size, int indent,
+                                StringRef suffix = "") {
+  for (int i = 0; i < indent; ++i)
+    note << "\t";
+  note << name << " \t"
+       << ": 0x" << llvm::utohexstr(address) << "-0x"
+       << llvm::utohexstr(address + size - 1) << " \t(" << size << " bytes)"
+       << suffix << "\n";
+}
+
 //===----------------------------------------------------------------------===//
 // BasicAllocation : sequential alloc from largest to smallest
 //===----------------------------------------------------------------------===//
@@ -165,10 +207,7 @@ static bool checkAndPrintOverflow(TileOp tile, int64_t address,
         tile.emitOpError("allocated buffers exceeded available memory\n");
     auto &note = error.attachNote() << "MemoryMap:\n";
     auto printbuffer = [&](StringRef name, int64_t address, int64_t size) {
-      note << "\t" << name << " \t"
-           << ": 0x" << llvm::utohexstr(address) << "-0x"
-           << llvm::utohexstr(address + size - 1) << " \t(" << size
-           << " bytes)\n";
+      printMemoryMapEntry(note, name, address, size, /*indent=*/1);
     };
     if (stacksize > 0)
       printbuffer("(stack)", 0, stacksize);
@@ -193,16 +232,8 @@ static bool basicAllocation(TileOp tile) {
   if (!device)
     return false;
 
-  const auto &targetModel = getTargetModel(tile);
-  int maxDataMemorySize = 0;
-  uint32_t tileAlignBitWidth = 0;
-  if (tile.isMemTile()) {
-    maxDataMemorySize = targetModel.getMemTileSize();
-    tileAlignBitWidth = targetModel.getMemTileLoadStoreBusWidth();
-  } else {
-    maxDataMemorySize = targetModel.getLocalMemorySize();
-    tileAlignBitWidth = targetModel.getComputeTileLoadStoreBusWidth();
-  }
+  auto [maxDataMemorySize, tileAlignBitWidth] =
+      tileMemoryLimits(tile, getTargetModel(tile));
 
   SmallVector<BufferOp> buffers;
   SmallVector<BufferOp> allocated_buffers;
@@ -293,14 +324,7 @@ static bool basicAllocation(TileOp tile) {
 
   // Sort by smallest address before printing memory map and running the
   // overlap / overflow checks below.
-  std::sort(allBuffers_on_tile.begin(), allBuffers_on_tile.end(),
-            [](BufferOp a, BufferOp b) {
-              assert(a.getAddress().has_value() &&
-                     "buffer must have address assigned");
-              assert(b.getAddress().has_value() &&
-                     "buffer must have address assigned");
-              return a.getAddress().value() < b.getAddress().value();
-            });
+  sortBuffersByAddress(allBuffers_on_tile);
 
   // Compute the true high-water mark across *all* buffers (including
   // pre-allocated ones above the dynamic-allocation cursor) so that
@@ -349,13 +373,11 @@ static void fillBankLimits(int numBanks, int bankSize,
 
 namespace {
 // Byte-granular map of which bytes of one tile's data memory are taken.
-//
-// This replaces the "next free address" watermark this allocator kept per
-// bank. A watermark is a bump pointer and cannot represent a hole, so a buffer
-// pinned at a fixed address stranded every free byte below it. A tile is at
-// most 512 kB, so tracking occupancy exactly costs at most a 64 kB bitmap.
-// Granularity is one byte rather than the load/store bus width because buffers
-// marked `aligned = false` are packed at unaligned offsets on purpose.
+// Replaces the old per-bank "next free address" watermark -- a bump pointer
+// that cannot represent a hole, so a fixed-address buffer stranded every free
+// byte below it -- at a cost of at most a 64 kB bitmap (a tile is at most
+// 512 kB). Byte, not bus-width, granularity: buffers marked `aligned = false`
+// are packed at unaligned offsets on purpose.
 class MemoryOccupancy {
 public:
   explicit MemoryOccupancy(int64_t size) : occupied(size, false) {}
@@ -412,6 +434,24 @@ public:
     return best;
   }
 
+  // Total free bytes in [lo, hi), for diagnostics that need to say how far
+  // off a failed placement was, not just that it failed.
+  int64_t freeBytes(int64_t lo, int64_t hi) const {
+    lo = std::max<int64_t>(lo, 0);
+    hi = std::min(hi, size());
+    int64_t total = 0;
+    for (int64_t cursor = lo; cursor < hi;) {
+      int gapStart = occupied.find_first_unset_in(cursor, hi);
+      if (gapStart == -1)
+        break;
+      int nextTaken = occupied.find_first_in(gapStart, hi);
+      int64_t gapEnd = nextTaken == -1 ? hi : nextTaken;
+      total += gapEnd - gapStart;
+      cursor = gapEnd;
+    }
+    return total;
+  }
+
 private:
   llvm::BitVector occupied;
 };
@@ -447,13 +487,11 @@ static void placeBuffer(BufferOp buffer, int64_t startAddr, int bank,
 // Places a buffer carrying an explicit `address`, checking that the space it
 // asks for is free and that any `mem_bank` it also carries agrees. Returns
 // false when the buffer has no address at all, leaving it to the mem_bank or
-// free-placement path; returns failure when the address is unusable.
-//
-// Every failure here has already emitted an error, so the caller must treat it
-// as terminal rather than falling back to another scheme: basic-sequential
-// rejects the same pins for its own reasons except the mem_bank/address
-// disagreement, which it would "honour" by silently ignoring the requested
-// bank.
+// free-placement path; returns failure when the address is unusable -- every
+// such failure has already emitted an error, so the caller must treat it as
+// terminal rather than falling back to another scheme, since basic-sequential
+// would "honour" a mem_bank/address disagreement by silently ignoring the
+// requested bank.
 static FailureOr<bool> checkAndAddBufferWithAddress(
     BufferOp buffer, int numBanks, uint32_t tileAlignBitWidth,
     MemoryOccupancy &occupancy, ArrayRef<BankLimits> bankLimits) {
@@ -472,9 +510,17 @@ static FailureOr<bool> checkAndAddBufferWithAddress(
   }
 
   int bank = getBankContaining(addr, numBanks, bankLimits);
-  if (bank < 0)
-    return buffer->emitOpError(
-        "address attribute does not fall within any bank range");
+  if (bank < 0) {
+    // A zero-sized buffer covers no bytes, so pinning it exactly at the top
+    // of the tile's memory -- one past every bank's range -- is legal: treat
+    // it as belonging to the last bank, since there is nothing there for it
+    // to conflict with.
+    if (buffer.getAllocationSize() == 0 && addr == bankLimits.back().endAddr)
+      bank = numBanks - 1;
+    else
+      return buffer->emitOpError(
+          "address attribute does not fall within any bank range");
+  }
 
   int64_t endAddr = addr + buffer.getAllocationSize();
   if (endAddr > occupancy.size())
@@ -524,12 +570,9 @@ static void printMemMap(TileOp tile, ArrayRef<BufferOp> allocatedBuffers,
   auto &note = error.attachNote()
                << "Current configuration of buffers in bank(s) : ";
   note << "MemoryMap:\n";
-  auto printbuffer = [&](StringRef name, int64_t address, int64_t size) {
-    note << "\t"
-         << "\t" << name << " \t"
-         << ": 0x" << llvm::utohexstr(address) << "-0x"
-         << llvm::utohexstr(address + size - 1) << " \t(" << size
-         << " bytes)\n";
+  auto printbuffer = [&](StringRef name, int64_t address, int64_t size,
+                        StringRef suffix = "") {
+    printMemoryMapEntry(note, name, address, size, /*indent=*/2, suffix);
   };
   for (int i = 0; i < numBanks; i++) {
     if (i == 0) {
@@ -550,8 +593,16 @@ static void printMemMap(TileOp tile, ArrayRef<BufferOp> allocatedBuffers,
       for (auto buffer : buffers) {
         auto addrOpt = buffer.getAddress();
         auto memBankOpt = buffer.getMemBank();
-        if (addrOpt && memBankOpt && *memBankOpt == i)
-          printbuffer(buffer.name(), *addrOpt, buffer.getAllocationSize());
+        if (!addrOpt || !memBankOpt || *memBankOpt != i)
+          continue;
+        int64_t size = buffer.getAllocationSize();
+        // Listed under its start bank only (mem_bank records one bank), but a
+        // buffer too big for one bank straddles rather than failing, so its
+        // range can genuinely run past the bank printed above it.
+        std::string suffix;
+        if (*addrOpt + size > bankLimits[i].endAddr)
+          suffix = (" (straddles into bank " + llvm::Twine(i + 1) + ")").str();
+        printbuffer(buffer.name(), *addrOpt, size, suffix);
       }
     };
     printPlaced(preAllocatedBuffers);
@@ -561,20 +612,13 @@ static void printMemMap(TileOp tile, ArrayRef<BufferOp> allocatedBuffers,
 
 // Places a buffer in the first bank, starting round-robin from the given
 // index, that has a hole big enough, taking the tightest such hole so that
-// large clean regions stay available for large buffers.
-//
-// Spreading over banks limits DMA bank contention; it is not a bound on how
-// large a buffer may be. So a buffer that fits in no single bank straddles
-// bank boundaries instead of being rejected, preferring a bank-aligned start
-// because that touches the fewest banks for a given size.
-//
-// `preferBankAligned` asks a straddling buffer to start on a bank boundary.
-// That is the placement touching the fewest banks, but it can strand up to a
-// bank of space ahead of the buffer, so the caller retries without it rather
-// than reporting a tile full.
-//
-// Returns false if there is no room for the buffer at all; the caller reports
-// which buffer failed.
+// large clean regions stay available for large buffers. Spreading over banks
+// only limits DMA contention, not buffer size, so one that fits no single
+// bank straddles bank boundaries instead of being rejected; `preferBankAligned`
+// starts a straddling buffer on a bank boundary (fewest banks touched, but can
+// strand up to a bank of space ahead of it), and the caller retries without it
+// rather than reporting the tile full. Returns false if there is no room for
+// the buffer at all; the caller reports which buffer failed.
 static bool setBufferAddress(BufferOp buffer, int numBanks,
                              uint32_t tileAlignBitWidth, int &startBankIndex,
                              bool preferBankAligned, bool spreadAcrossBanks,
@@ -695,6 +739,122 @@ namespace {
 enum class BankAwareResult { Success, OutOfMemory, ConstraintUnsatisfiable };
 } // namespace
 
+// Places every buffer carrying an explicit `address`, address-first so a
+// mem_bank-only buffer can't carve up space an address pin needs. Anything
+// left with only a `mem_bank` is recorded as required and queued into
+// `buffersToAlloc` for the strategy portfolio to place. Failure here is
+// always terminal: an error has already been emitted, and retrying under
+// another scheme would either hit the same problem or, for a mem_bank/address
+// disagreement, "succeed" by ignoring the bank the design asked for.
+static LogicalResult placePreAllocatedBuffers(
+    SmallVectorImpl<BufferOp> &preAllocatedBuffers, int numBanks,
+    uint32_t tileAlignBitWidth, MemoryOccupancy &occupancy,
+    ArrayRef<BankLimits> bankLimits, RequiredBanks &requiredBanks,
+    SmallVectorImpl<BufferOp> &buffersToAlloc) {
+  // Address buffers first (ascending, within the same bank), then
+  // mem_bank-only buffers; otherwise stable.
+  std::sort(preAllocatedBuffers.begin(), preAllocatedBuffers.end(),
+            [](BufferOp a, BufferOp b) -> bool {
+              auto a_addr = a.getAddress();
+              auto b_addr = b.getAddress();
+              if (a_addr.has_value() && b_addr.has_value())
+                return a_addr.value() < b_addr.value();
+              return a_addr.has_value() && !b_addr.has_value();
+            });
+
+  for (auto buffer : preAllocatedBuffers) {
+    auto has_addr = checkAndAddBufferWithAddress(
+        buffer, numBanks, tileAlignBitWidth, occupancy, bankLimits);
+    if (failed(has_addr))
+      return failure();
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    if (*has_addr)
+      continue;
+    // Only a mem_bank: the address is still ours to choose, so queue it with
+    // the rest instead of letting a small constrained buffer carve up the free
+    // space before the large buffers have had a chance at it.
+    if (failed(recordRequiredBank(buffer, numBanks, requiredBanks)))
+      return failure();
+    buffersToAlloc.push_back(buffer);
+  }
+  return success();
+}
+
+// What one call to tryAllocationStrategies found: the first buffer that a
+// strategy failed to place (null if some strategy placed everything), whether
+// any strategy placed every buffer at all, and the best contiguous run any
+// such strategy left for the core's own data.
+struct StrategyAttemptResult {
+  BufferOp failed = nullptr;
+  bool placedEverything = false;
+  int64_t bestFreeRun = 0;
+};
+
+// Packing around fixed obstacles has no cheap optimal answer, so rather than
+// trusting one greedy order, try a few (each a handful of bitmap scans) and
+// keep the first that fits. Buffers always go largest first, so small ones
+// cannot fragment the clean regions large ones need; the two knobs are
+// whether a bank-pinned buffer goes before the unconstrained ones (first
+// guarantees it a home, later avoids it bisecting a free run that spans
+// banks) and whether a straddling buffer starts on a bank boundary (fewest
+// banks touched, but strands the space ahead of it). The last entry gives up
+// bank spreading entirely and packs from the bottom -- the only one that can
+// leave a large contiguous run for the core's own data, so it is what a
+// tight `reserved_data_size` falls back to.
+//
+// Placing every buffer is not enough on its own: the core compiler is handed
+// the largest gap left over, so a layout that fits but strands the core's own
+// data is no good either. A later strategy failing to place everything must
+// not hide an earlier one that fit but left too little room for
+// `reservedData` -- that shortfall is the actionable diagnostic -- so the best
+// free run across all attempts is tracked regardless of which one is last.
+static StrategyAttemptResult tryAllocationStrategies(
+    ArrayRef<BufferOp> buffersToAlloc, int numBanks, uint32_t tileAlignBitWidth,
+    const RequiredBanks &requiredBanks, MemoryOccupancy &occupancy,
+    const MemoryOccupancy &pinnedOnly, ArrayRef<BankLimits> bankLimits,
+    SmallVectorImpl<BufferOp> &allocatedBuffers, int64_t maxDataMemorySize,
+    int64_t stacksize, ArrayRef<BufferOp> allBuffers_on_tile,
+    int64_t reservedData) {
+  static constexpr struct {
+    bool bankConstrainedFirst;
+    bool preferBankAligned;
+    bool spreadAcrossBanks;
+  } strategies[] = {{true, true, true},
+                    {true, false, true},
+                    {false, false, true},
+                    {true, false, false}};
+
+  StrategyAttemptResult result;
+  for (auto strategy : strategies) {
+    deAllocationBuffers(allocatedBuffers, requiredBanks);
+    allocatedBuffers.clear();
+    occupancy = pinnedOnly;
+    // Sorted into a fresh vector each time, so every strategy's order is
+    // relative to the original walk order rather than to whatever the previous
+    // strategy's sort happened to leave behind.
+    SmallVector<BufferOp> order(buffersToAlloc.begin(), buffersToAlloc.end());
+    llvm::stable_sort(order, [&](BufferOp a, BufferOp b) {
+      if (strategy.bankConstrainedFirst &&
+          requiredBanks.count(a) != requiredBanks.count(b))
+        return requiredBanks.count(a) > requiredBanks.count(b);
+      return a.getAllocationSize() > b.getAllocationSize();
+    });
+    result.failed = placeFreeBuffers(order, numBanks, tileAlignBitWidth,
+                                     strategy.preferBankAligned,
+                                     strategy.spreadAcrossBanks, requiredBanks,
+                                     occupancy, bankLimits, allocatedBuffers);
+    if (result.failed)
+      continue;
+    result.placedEverything = true;
+    int64_t freeRun =
+        coreFreeRun(maxDataMemorySize, stacksize, allBuffers_on_tile);
+    result.bestFreeRun = std::max(result.bestFreeRun, freeRun);
+    if (freeRun >= reservedData)
+      break;
+  }
+  return result;
+}
+
 static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
   auto device = tile->getParentOfType<AIE::DeviceOp>();
   if (!device)
@@ -704,15 +864,8 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
                                       // end addresses for each bank
 
   const auto &targetModel = getTargetModel(tile);
-  int maxDataMemorySize = 0;
-  uint32_t tileAlignBitWidth = 0;
-  if (tile.isMemTile()) {
-    maxDataMemorySize = targetModel.getMemTileSize();
-    tileAlignBitWidth = targetModel.getMemTileLoadStoreBusWidth();
-  } else {
-    maxDataMemorySize = targetModel.getLocalMemorySize();
-    tileAlignBitWidth = targetModel.getComputeTileLoadStoreBusWidth();
-  }
+  auto [maxDataMemorySize, tileAlignBitWidth] =
+      tileMemoryLimits(tile, targetModel);
 
   int numBanks = targetModel.getNumBanks(tile.getCol(), tile.getRow());
   int bankSize = maxDataMemorySize / numBanks;
@@ -748,129 +901,52 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
     }
   });
 
-  // First, allocate the buffer with pre-allocated address
-  // Then, allocated the buffer with pre-allocated mem_bank t
-  // Do it by doing a sort preAllocatedBuffers to have buffer with address
-  // first, then buffer with only mem_bank
-  std::sort(preAllocatedBuffers.begin(), preAllocatedBuffers.end(),
-            [](BufferOp a, BufferOp b) -> bool {
-              auto a_addr = a.getAddress();
-              auto b_addr = b.getAddress();
-              if (a_addr.has_value() && b_addr.has_value()) {
-                return a_addr.value() <
-                       b_addr.value(); // ascending address order
-                                       // within same bank
-              }
-              // Address buffers before mem_bank-only buffers; otherwise
-              // stable.
-              return a_addr.has_value() && !b_addr.has_value();
-            });
+  if (failed(placePreAllocatedBuffers(preAllocatedBuffers, numBanks,
+                                      tileAlignBitWidth, occupancy, bankLimits,
+                                      requiredBanks, buffersToAlloc)))
+    return BankAwareResult::ConstraintUnsatisfiable;
 
-  for (auto buffer : preAllocatedBuffers) {
-
-    auto has_addr = checkAndAddBufferWithAddress(
-        buffer, numBanks, tileAlignBitWidth, occupancy, bankLimits);
-    // An error has already been emitted; retrying under another scheme would
-    // either hit the same problem or, for a mem_bank/address disagreement,
-    // "succeed" by ignoring the bank the design asked for.
-    if (failed(has_addr))
-      return BankAwareResult::ConstraintUnsatisfiable;
-    // NOLINTNEXTLINE
-    if (*has_addr)
-      continue;
-    // Only a mem_bank: the address is still ours to choose, so queue it with
-    // the rest instead of letting a small constrained buffer carve up the free
-    // space before the large buffers have had a chance at it.
-    if (failed(recordRequiredBank(buffer, numBanks, requiredBanks)))
-      return BankAwareResult::ConstraintUnsatisfiable;
-    buffersToAlloc.push_back(buffer);
-  }
-
-  // Set addresses for remaining buffers.
-  SmallVector<BufferOp>
-      allocatedBuffers; // keep track of buffers allocated in this function to
-                        // be able to deallocate in case of failure and print
-                        // helpful debug info about them. This does not include
-                        // the pre-allocated buffers.
-
-  // Packing around fixed obstacles has no cheap optimal answer, so rather than
-  // trusting one greedy order, try a few and keep the first that fits. Each
-  // attempt is a handful of bitmap scans.
-  //
-  // Buffers always go largest first, so small ones cannot fragment the clean
-  // regions large ones need. The two knobs are whether a buffer pinned to a
-  // bank goes before the unconstrained ones -- placing it first guarantees it a
-  // home, placing it later stops it bisecting a free run that spans banks --
-  // and whether a straddling buffer starts on a bank boundary, which touches
-  // the fewest banks but strands the space ahead of it.
-  // The last entry gives up bank spreading entirely and packs from the bottom;
-  // it is the only one that can leave a large contiguous run for the core's own
-  // data, so it is what a tight `reserved_data_size` falls back to.
-  static constexpr struct {
-    bool bankConstrainedFirst;
-    bool preferBankAligned;
-    bool spreadAcrossBanks;
-  } strategies[] = {{true, true, true},
-                    {true, false, true},
-                    {false, false, true},
-                    {true, false, false}};
-
+  // Keeps track of buffers allocated by the strategy portfolio below, to be
+  // able to deallocate in case of failure and print helpful debug info about
+  // them. This does not include the pre-allocated buffers.
+  SmallVector<BufferOp> allocatedBuffers;
   MemoryOccupancy pinnedOnly = occupancy;
-  BufferOp failed = nullptr;
-  // The best free run any strategy managed to leave, and whether one placed
-  // every buffer at all. A later strategy failing on placement must not hide
-  // an earlier one that fit but left too little room for the core's own data:
-  // that shortfall is the actionable diagnostic, and it is what the user has
-  // to act on.
-  bool placedEverything = false;
-  int64_t bestFreeRun = 0;
-  for (auto strategy : strategies) {
-    deAllocationBuffers(allocatedBuffers, requiredBanks);
-    allocatedBuffers.clear();
-    occupancy = pinnedOnly;
-    // Sorted into a fresh vector each time, so every strategy's order is
-    // relative to the original walk order rather than to whatever the previous
-    // strategy's sort happened to leave behind.
-    SmallVector<BufferOp> order(buffersToAlloc);
-    llvm::stable_sort(order, [&](BufferOp a, BufferOp b) {
-      if (strategy.bankConstrainedFirst &&
-          requiredBanks.count(a) != requiredBanks.count(b))
-        return requiredBanks.count(a) > requiredBanks.count(b);
-      return a.getAllocationSize() > b.getAllocationSize();
-    });
-    failed = placeFreeBuffers(order, numBanks, tileAlignBitWidth,
-                              strategy.preferBankAligned,
-                              strategy.spreadAcrossBanks, requiredBanks,
-                              occupancy, bankLimits, allocatedBuffers);
-    if (failed)
-      continue;
-    // Placing every buffer is not enough: the core compiler is handed the
-    // largest gap left over, so a layout that fits but strands the core's own
-    // data is no good either. Both must hold before a strategy is accepted.
-    placedEverything = true;
-    int64_t freeRun =
-        coreFreeRun(maxDataMemorySize, stacksize, allBuffers_on_tile);
-    bestFreeRun = std::max(bestFreeRun, freeRun);
-    if (freeRun >= reservedData)
-      break;
-  }
-  if (placedEverything && bestFreeRun < reservedData) {
+  StrategyAttemptResult attempt = tryAllocationStrategies(
+      buffersToAlloc, numBanks, tileAlignBitWidth, requiredBanks, occupancy,
+      pinnedOnly, bankLimits, allocatedBuffers, maxDataMemorySize, stacksize,
+      allBuffers_on_tile, reservedData);
+
+  if (attempt.placedEverything && attempt.bestFreeRun < reservedData) {
     // Every buffer fit, but not with enough contiguous room left over for the
     // core's own data, which the linker script hands out as a single region.
     tile.emitWarning("buffers leave only ")
-        << bestFreeRun << " contiguous bytes for the core's data sections, "
+        << attempt.bestFreeRun
+        << " contiguous bytes for the core's data sections, "
         << "which need " << reservedData
         << " bytes. Every buffer was placed, so the memory map is not the "
            "interesting part; the free space is simply too broken up.";
     deAllocationBuffers(allocatedBuffers, requiredBanks);
     return BankAwareResult::OutOfMemory;
   }
-  if (failed) {
+  if (BufferOp failed = attempt.failed) {
     // A buffer pinned to a bank that cannot hold it is a constraint the user
     // wrote, not a tile that ran out of room, so it gets its own error and no
     // memory map.
     if (requiredBanks.count(failed)) {
-      failed->emitOpError("would override existing mem_bank");
+      int bank = requiredBanks.lookup(failed);
+      int64_t need = failed.getAllocationSize();
+      int64_t bankCapacity =
+          bankLimits[bank].endAddr - bankLimits[bank].startAddr;
+      if (need > bankCapacity)
+        failed->emitOpError("requires ")
+            << need << " bytes, which cannot fit in bank " << bank << " ("
+            << bankCapacity << " bytes total)";
+      else
+        failed->emitOpError("requires ")
+            << need << " bytes in bank " << bank << ", but only "
+            << occupancy.freeBytes(bankLimits[bank].startAddr,
+                                   bankLimits[bank].endAddr)
+            << " of " << bankCapacity << " bytes are free there";
       deAllocationBuffers(allocatedBuffers, requiredBanks);
       return BankAwareResult::ConstraintUnsatisfiable;
     }
@@ -887,14 +963,7 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
   assert(allocatedBuffers.size() == buffersToAlloc.size());
 
   // Sort by smallest address before printing memory map.
-  std::sort(allBuffers_on_tile.begin(), allBuffers_on_tile.end(),
-            [](BufferOp a, BufferOp b) {
-              assert(a.getAddress().has_value() &&
-                     "buffer must have address assigned");
-              assert(b.getAddress().has_value() &&
-                     "buffer must have address assigned");
-              return a.getAddress().value() < b.getAddress().value();
-            });
+  sortBuffersByAddress(allBuffers_on_tile);
   // Every placement above was taken from free space inside the tile, so a
   // bank/tile overflow is no longer representable here; the stack and overlap
   // checks remain as a backstop over the final addresses.
@@ -983,7 +1052,31 @@ struct AIEAssignBufferAddressesPass
           // ask for. Report the constraint instead.
           tile.emitOpError("Bank-aware allocation failed.");
           return signalPassFailure();
-        case BankAwareResult::OutOfMemory:
+        case BankAwareResult::OutOfMemory: {
+          // basic-sequential has no notion of banks, so a buffer that was
+          // only ever going to get an address from bank-aware placement
+          // (mem_bank but no address) would silently lose that guarantee --
+          // even though its own pin may have been perfectly satisfiable and
+          // bank-aware failed for an unrelated reason (another buffer, or
+          // reserved_data_size). Only an address pin is safe to retry under
+          // basic-sequential, since that scheme does honour it.
+          SmallVector<BufferOp> droppedPins;
+          device.walk<WalkOrder::PreOrder>([&](BufferOp buffer) {
+            if (buffer.getTileOp() == tile && buffer.getMemBank() &&
+                !buffer.getAddress())
+              droppedPins.push_back(buffer);
+          });
+          if (!droppedPins.empty()) {
+            InFlightDiagnostic diag = tile.emitOpError(
+                "bank-aware allocation failed; falling back to "
+                "basic-sequential would silently drop the mem_bank pin on: ");
+            for (auto [i, buffer] : llvm::enumerate(droppedPins)) {
+              if (i)
+                diag << ", ";
+              diag << buffer.name();
+            }
+            return signalPassFailure();
+          }
           tile.emitWarning("Bank-aware allocation failed, trying basic "
                            "sequential allocation.");
           if (!basicAllocation(tile)) {
@@ -991,6 +1084,7 @@ struct AIEAssignBufferAddressesPass
             return signalPassFailure();
           }
           break;
+        }
         }
       }
     }

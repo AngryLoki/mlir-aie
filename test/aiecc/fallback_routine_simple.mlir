@@ -20,7 +20,7 @@
 // "a" previously carried no mem_bank and merely being larger than one bank was
 // enough to defeat bank-aware allocation. That is no longer so: a buffer that
 // fits in no single bank now straddles bank boundaries rather than failing.
-// CHECK: error: 'aie.buffer' op would override existing mem_bank
+// CHECK: error: 'aie.buffer' op requires 16384 bytes, which cannot fit in bank 1 (8192 bytes total)
 // CHECK: error: 'aie.tile' op Bank-aware allocation failed.
 
 module @test {

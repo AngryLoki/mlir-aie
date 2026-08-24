@@ -1646,6 +1646,9 @@ def AIE_BufferOp: AIE_Op<"buffer", [
         OptionalAttr<StrAttr>:$sym_name,
         OptionalAttr<AIEI32Attr>:$address,
         OptionalAttr<ElementsAttr>:$initial_value,
+        // Pin the buffer to a specific L1 memory bank. A hard placement
+        // constraint: the buffer allocator reports ConstraintUnsatisfiable
+        // rather than silently placing the buffer in another bank.
         OptionalAttr<AIEI32Attr>:$mem_bank,
         DefaultValuedAttr<BoolAttr, "true">:$aligned
   );

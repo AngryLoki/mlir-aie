@@ -148,3 +148,22 @@ module @zero_sized_buffer_pinned_to_full_bank {
     } {stack_size = 1024 : i32}
   }
 }
+
+// -----
+
+// A zero-sized buffer pinned by explicit `address` to exactly the top of the
+// tile's memory -- one past every bank's range -- is legal for the same
+// reason: it covers no bytes, so there is nothing there for it to conflict
+// with. It must land in the last bank rather than be rejected for falling
+// outside every bank range.
+// CHECK-LABEL: module @zero_sized_buffer_at_exact_top_of_tile
+// CHECK: %top = aie.buffer(%tile_0_2) {address = 65536 : i32, mem_bank = 3 : i32, sym_name = "top"} : memref<0xi32>
+module @zero_sized_buffer_at_exact_top_of_tile {
+  aie.device(npu2) {
+    %tile_0_2 = aie.tile(0, 2)
+    %top = aie.buffer(%tile_0_2) {address = 65536 : i32, sym_name = "top"} : memref<0xi32>
+    aie.core(%tile_0_2) {
+      aie.end
+    } {stack_size = 1024 : i32}
+  }
+}
