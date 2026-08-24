@@ -48,6 +48,11 @@ largestFreeRun(int64_t memSize,
   MemoryRun best;
   int64_t cursor = 0;
   for (auto &interval : occupied) {
+    // A zero-length interval (a zero-sized buffer) occupies no bytes, so it
+    // must not act as a split point in the middle of an otherwise-contiguous
+    // run.
+    if (interval.first == interval.second)
+      continue;
     int64_t gapEnd = std::min(interval.first, memSize);
     if (gapEnd - cursor > best.size)
       best = {cursor, gapEnd - cursor};

@@ -86,11 +86,9 @@ LogicalResult xilinx::AIE::AIETranslateToLdScript(ModuleOp module,
       // emitted into the "data" region below. Buffers are placed by the
       // buffer-address allocator, which (in bank-aware mode) can leave the free
       // space fragmented -- pick the largest free gap across the stack and this
-      // tile's buffers within the tile's local memory.
-      //
-      // largestFreeRun is shared with the allocator's reserved_data_size
-      // acceptance test (AIEAssignBuffers), which has to predict exactly the
-      // number computed here.
+      // tile's buffers within the tile's local memory, via the same
+      // largestFreeRun the allocator's reserved_data_size acceptance test
+      // (AIEAssignBuffers) uses, so the two predict the identical number.
       auto core = tile.getCoreOp();
       int localMemSize = targetModel.getLocalMemorySize();
 
