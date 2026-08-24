@@ -46,3 +46,22 @@ def mlir_aie_design():
 with mlir_mod_ctx() as ctx:
     mlir_aie_design()
     print(ctx.module)
+
+
+# Worker validates stack_size the same way it validates reserved_data_size: a
+# clear ValueError at construction time rather than an opaque MLIR verifier
+# failure much later in the pipeline.
+try:
+    Worker(None, stack_size=0, while_true=False)
+    raise AssertionError("expected ValueError for stack_size < 1")
+except ValueError:
+    pass
+
+try:
+    Worker(None, stack_size="2048", while_true=False)
+    raise AssertionError("expected ValueError for non-int stack_size")
+except ValueError:
+    pass
+
+# CHECK: PASS
+print("PASS")

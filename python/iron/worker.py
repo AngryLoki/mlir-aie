@@ -86,6 +86,16 @@ class Worker(ObjectFifoEndpoint):
             raise ValueError(
                 f"Worker requires a compute tile, but got tile_type={tile.tile_type}"
             )
+        if stack_size is not None:
+            if not isinstance(stack_size, int) or isinstance(stack_size, bool):
+                raise ValueError(
+                    f"Worker stack_size must be an int, but got "
+                    f"{type(stack_size).__name__}"
+                )
+            if stack_size < 1:
+                raise ValueError(
+                    f"Worker stack_size must be >= 1, but got {stack_size}"
+                )
         if reserved_data_size is not None:
             if not isinstance(reserved_data_size, int) or isinstance(
                 reserved_data_size, bool
