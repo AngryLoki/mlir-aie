@@ -9,17 +9,8 @@
 #
 # The individual .mlir tests in this directory pin exact addresses, which pins
 # down behaviour but says nothing about whether the allocator is any *good*.
-# This checks the properties that matter across many generated designs:
-#
-#   legality      -- placements never overlap, escape the tile, land in the
-#                    stack, break alignment, move a pinned address, leave the
-#                    bank a design asked for, or (when reserved_data_size was
-#                    set) leave too little contiguous room for it despite the
-#                    allocator reporting success
-#   completeness  -- a design that provably fits is actually placed
-#   determinism   -- the same input twice gives the same addresses
-#   quality       -- buffers spread over banks, and a buffer that fits inside
-#                    one bank is not needlessly split across two
+# This checks legality, completeness, determinism, and quality (bank spread,
+# no needless splitting) across many generated designs.
 #
 # Feasibility comes from a construct-then-hide oracle: a valid layout is built
 # first, then a random subset of it is hidden behind `address` / `mem_bank` /
@@ -36,6 +27,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -167,6 +159,74 @@ def build_design(rng, cfg):
         lines.append("    aie.memtile_dma(%t) { aie.end }")
     lines += ["  }", "}", ""]
     return "\n".join(lines), blocks, reserved
+
+
+STRESS_BUFFERS = 300
+STRESS_MAX_SECONDS = 30
+
+
+def zero_size_reserved_data_case(cfg):
+    """A permanent regression guard, independent of chance: a zero-sized
+    buffer pinned strictly inside the tile's only free run must not
+    fragment it (a zero-length occupied interval is not a split point)."""
+    cap, bus, stack = cfg["cap"], cfg["bus"], cfg["stack"]
+    addr = align_up(stack + bus, bus) + bus * 100
+    blocks = [dict(addr=addr, size=0, aligned=True, name="mid", role="pin")]
+    reserved = cap - stack
+    lines = [
+        "module {",
+        f'  aie.device({cfg["dev"]}) {{',
+        f'    %t = aie.tile({cfg["tile"][0]}, {cfg["tile"][1]})',
+        f'    %mid = aie.buffer(%t) {{sym_name = "mid", address = {addr} : i32}} : memref<0xi8>',
+        f'    aie.core(%t) {{ aie.end }} '
+        f'{{stack_size = {stack} : i32, reserved_data_size = {reserved} : i32}}',
+        "  }",
+        "}",
+        "",
+    ]
+    return "\n".join(lines), blocks, reserved
+
+
+def check_forced_cases(workdir):
+    """Regressions specific enough that leaving them to the random generator
+    would be a coin flip; run every time instead."""
+    problems = []
+    cfg = DEVICES[0]  # "core": reserved_data_size only applies where there's a core
+    mlir, blocks, reserved = zero_size_reserved_data_case(cfg)
+    placed = allocate(mlir, workdir)
+    if placed is None:
+        problems.append(
+            "zero_size_reserved_data: allocator rejected a provably-fitting design"
+        )
+    else:
+        bad = legality_violations(cfg, blocks, placed)
+        run, _ = largest_free_run(cfg, placed)
+        if reserved and run < reserved:
+            bad.append(
+                f"reserved_data_size {reserved} not honored, largest "
+                f"contiguous run is only {run}"
+            )
+        problems.extend(f"zero_size_reserved_data: {b}" for b in bad)
+    return problems
+
+
+def stress_design(cfg, n_buffers):
+    """Many small buffers on one tile, to catch a real compile-time blow-up
+    in a per-buffer scan that costs O(tile size) -- not exercised by the
+    random designs above, which cap out at 14 buffers per tile."""
+    lines = [
+        "module {",
+        f'  aie.device({cfg["dev"]}) {{',
+        f'    %t = aie.tile({cfg["tile"][0]}, {cfg["tile"][1]})',
+    ]
+    for i in range(n_buffers):
+        lines.append(f'    %b{i} = aie.buffer(%t) {{sym_name = "b{i}"}} : memref<16xi8>')
+    if cfg["stack"]:
+        lines.append(f'    aie.core(%t) {{ aie.end }} {{stack_size = {cfg["stack"]} : i32}}')
+    else:
+        lines.append("    aie.memtile_dma(%t) { aie.end }")
+    lines += ["  }", "}", ""]
+    return "\n".join(lines)
 
 
 def allocate(mlir, workdir):
@@ -338,6 +398,27 @@ def main():
                 else "0 samples despite solved designs"
             ),
         )
+
+        forced_problems = check_forced_cases(workdir)
+        for line in forced_problems:
+            print("ILLEGAL:", line)
+        report(
+            "forced-regressions",
+            not forced_problems,
+            f"{len(forced_problems)} problem(s)",
+        )
+
+        stress_cfg = DEVICES[1]  # memtile: 512 KB, plenty of room for 300 tiny buffers
+        stress_mlir = stress_design(stress_cfg, STRESS_BUFFERS)
+        t0 = time.monotonic()
+        stress_placed = allocate(stress_mlir, workdir)
+        stress_elapsed = time.monotonic() - t0
+        report(
+            "stress",
+            stress_placed is not None and stress_elapsed <= STRESS_MAX_SECONDS,
+            f"{len(stress_placed) if stress_placed else 0}/{STRESS_BUFFERS} placed "
+            f"in {stress_elapsed:.1f}s (max {STRESS_MAX_SECONDS}s)",
+        )
         return 0
 
 
@@ -348,6 +429,8 @@ def main():
 # CHECK: bank-splitting: {{.*}} : OK
 # CHECK: bank-balance: {{.*}} : OK
 # CHECK: contiguity: {{.*}} : OK
+# CHECK: forced-regressions: {{.*}} : OK
+# CHECK: stress: {{.*}} : OK
 # CHECK-NOT: REGRESSION
 
 if __name__ == "__main__":
