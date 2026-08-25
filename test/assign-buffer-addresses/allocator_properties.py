@@ -222,7 +222,9 @@ def stress_design(cfg, n_buffers):
     for i in range(n_buffers):
         lines.append(f'    %b{i} = aie.buffer(%t) {{sym_name = "b{i}"}} : memref<16xi8>')
     if cfg["stack"]:
-        lines.append(f'    aie.core(%t) {{ aie.end }} {{stack_size = {cfg["stack"]} : i32}}')
+        lines.append(
+            f'    aie.core(%t) {{ aie.end }} {{stack_size = {cfg["stack"]} : i32}}'
+        )
     else:
         lines.append("    aie.memtile_dma(%t) { aie.end }")
     lines += ["  }", "}", ""]
