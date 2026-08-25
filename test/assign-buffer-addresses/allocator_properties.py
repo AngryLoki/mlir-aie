@@ -178,8 +178,8 @@ def zero_size_reserved_data_case(cfg):
         f'  aie.device({cfg["dev"]}) {{',
         f'    %t = aie.tile({cfg["tile"][0]}, {cfg["tile"][1]})',
         f'    %mid = aie.buffer(%t) {{sym_name = "mid", address = {addr} : i32}} : memref<0xi8>',
-        f'    aie.core(%t) {{ aie.end }} '
-        f'{{stack_size = {stack} : i32, reserved_data_size = {reserved} : i32}}',
+        f"    aie.core(%t) {{ aie.end }} "
+        f"{{stack_size = {stack} : i32, reserved_data_size = {reserved} : i32}}",
         "  }",
         "}",
         "",
