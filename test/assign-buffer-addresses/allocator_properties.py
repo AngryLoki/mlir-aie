@@ -220,7 +220,9 @@ def stress_design(cfg, n_buffers):
         f'    %t = aie.tile({cfg["tile"][0]}, {cfg["tile"][1]})',
     ]
     for i in range(n_buffers):
-        lines.append(f'    %b{i} = aie.buffer(%t) {{sym_name = "b{i}"}} : memref<16xi8>')
+        lines.append(
+            f'    %b{i} = aie.buffer(%t) {{sym_name = "b{i}"}} : memref<16xi8>'
+        )
     if cfg["stack"]:
         lines.append(
             f'    aie.core(%t) {{ aie.end }} {{stack_size = {cfg["stack"]} : i32}}'
