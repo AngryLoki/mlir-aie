@@ -571,7 +571,7 @@ static void printMemMap(TileOp tile, ArrayRef<BufferOp> allocatedBuffers,
                << "Current configuration of buffers in bank(s) : ";
   note << "MemoryMap:\n";
   auto printbuffer = [&](StringRef name, int64_t address, int64_t size,
-                        StringRef suffix = "") {
+                         StringRef suffix = "") {
     printMemoryMapEntry(note, name, address, size, /*indent=*/2, suffix);
   };
   for (int i = 0; i < numBanks; i++) {
