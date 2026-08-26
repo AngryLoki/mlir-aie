@@ -503,9 +503,8 @@ struct BankAwareContext {
 // false when the buffer has no address at all, leaving it to the mem_bank or
 // free-placement path; returns failure when the address is unusable -- every
 // such failure has already emitted an error, so the caller must treat it as
-// terminal rather than falling back to another scheme, since basic-sequential
-// would "honour" a mem_bank/address disagreement by silently ignoring the
-// requested bank.
+// terminal rather than falling back to another scheme (see BankAwareResult
+// below for why).
 static FailureOr<bool>
 checkAndAddBufferWithAddress(BufferOp buffer, const BankAwareContext &ctx,
                              MemoryOccupancy &occupancy) {
@@ -756,8 +755,8 @@ enum class BankAwareResult { Success, OutOfMemory, ConstraintUnsatisfiable };
 // left with only a `mem_bank` is recorded as required and queued into
 // `buffersToAlloc` for the strategy portfolio to place. Failure here is
 // always terminal: an error has already been emitted, and retrying under
-// another scheme would either hit the same problem or, for a mem_bank/address
-// disagreement, "succeed" by ignoring the bank the design asked for.
+// another scheme would either hit the same problem or silently drop the
+// constraint (see BankAwareResult below for why that isn't acceptable).
 static LogicalResult placePreAllocatedBuffers(
     SmallVectorImpl<BufferOp> &preAllocatedBuffers, const BankAwareContext &ctx,
     MemoryOccupancy &occupancy, RequiredBanks &requiredBanks,
@@ -1054,9 +1053,8 @@ struct AIEAssignBufferAddressesPass
         case BankAwareResult::Success:
           break;
         case BankAwareResult::ConstraintUnsatisfiable:
-          // Basic sequential allocation ignores mem_bank, so retrying there
-          // would "succeed" by putting the buffer in a bank the design did not
-          // ask for. Report the constraint instead.
+          // See BankAwareResult's definition for why this can't retry under
+          // basic-sequential. Report the constraint instead.
           tile.emitOpError("Bank-aware allocation failed.");
           return signalPassFailure();
         case BankAwareResult::OutOfMemory: {
