@@ -38,6 +38,10 @@ module @test {
 
 module @test_align{
 
+  // The stack size is spelled `stack_size`; the `stackSize` this test used to
+  // carry is not a registered attribute and was silently ignored, leaving the
+  // default 1024. Every buffer here is either pinned or placed above 8192, so
+  // the fix doesn't move any of the CHECK addresses above.
   aie.device(npu2){
       %0 = aie.tile(3, 3)
       %b1 = aie.buffer(%0) { address=4096 : i32,  sym_name = "a"} : memref<1024xi32>
@@ -47,7 +51,7 @@ module @test_align{
 
       aie.core(%0){
         aie.end
-      }{stackSize = 4096 : i32}
+      }{stack_size = 4096 : i32}
   }
 
 
@@ -65,7 +69,7 @@ module @test_align2{
 
     aie.core(%0) {
       aie.end
-    }{stackSize = 4096 : i32}
+    }{stack_size = 4096 : i32}
 
   }
 

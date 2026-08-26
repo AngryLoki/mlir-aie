@@ -1,0 +1,35 @@
+//===- bank_aware_mem_bank_pin_with_reservation.mlir ------------*- MLIR -*-===//
+//
+// Copyright (C) 2026 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+// mem_bank and reserved_data_size are both hard constraints, and this is the
+// one case where they can genuinely conflict: a bank pin sits in the middle
+// of the tile's free space, so the reservation's contiguous-run search must
+// look past the exact address/size of the pinned buffer rather than just
+// summing free bytes.
+//
+// tile(0, 2) on npu2 has 65536 bytes across 4 banks of 16384. "mid" is pinned
+// to bank 1 and lands at its start (address 16384), so the tile's free space
+// is split into [1024, 16384) after the stack (15360 bytes) and
+// [24576, 65536) after "mid" (40960 bytes, spanning the rest of bank 1 plus
+// banks 2 and 3 -- addresses are linear across bank boundaries). See
+// bank_aware_mem_bank_pin_with_reservation_error.mlir for the case where the
+// reservation doesn't fit in either run.
+
+// RUN: aie-opt --aie-assign-buffer-addresses="alloc-scheme=bank-aware" %s | FileCheck %s
+
+// A reservation that only fits in the larger [24576, 65536) run must be
+// placed there, with the bank pin undisturbed.
+// CHECK: %mid = aie.buffer(%tile_0_2) {address = 16384 : i32, mem_bank = 1 : i32, sym_name = "mid"} : memref<8192xi8>
+module @fits_around_the_pin {
+  aie.device(npu2) {
+    %tile_0_2 = aie.tile(0, 2)
+    %mid = aie.buffer(%tile_0_2) {sym_name = "mid", mem_bank = 1 : i32} : memref<8192xi8>
+    aie.core(%tile_0_2) {
+      aie.end
+    } {stack_size = 1024 : i32, reserved_data_size = 30000 : i32}
+  }
+}

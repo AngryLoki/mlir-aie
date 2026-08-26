@@ -1,0 +1,24 @@
+//===- bank_aware_reserved_data_no_free_run_error.mlir ----------*- MLIR -*-===//
+//
+// Copyright (C) 2026 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+// See bank_aware_reserved_data_no_free_run.mlir: the stack and "a" leave a
+// largest free run of exactly 0 bytes. Any reservation above 0 -- here just 1
+// byte -- must fail rather than reporting a bogus non-zero contiguous size.
+
+// RUN: aie-opt --verify-diagnostics --aie-assign-buffer-addresses='alloc-scheme=bank-aware' %s
+
+module @zero_free_run_nonzero_reservation {
+  aie.device(npu2) {
+    // expected-warning @below {{buffers leave only 0 contiguous bytes for the core's data sections, which need 1 bytes}}
+    // expected-error @below {{'aie.tile' op Bank-aware allocation failed.}}
+    %tile_0_2 = aie.tile(0, 2)
+    %a = aie.buffer(%tile_0_2) {sym_name = "a", aligned = false} : memref<64512xi8>
+    aie.core(%tile_0_2) {
+      aie.end
+    } {stack_size = 1024 : i32, reserved_data_size = 1 : i32}
+  }
+}
