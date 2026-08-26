@@ -20,7 +20,7 @@ from aie.utils.hostruntime.cli import run_design_cli
 from aie.utils.verify import assert_pass
 
 
-@iron.jit()
+@iron.jit
 def vision_passthrough(
     in_tensor: In,
     _unused: In,

@@ -44,7 +44,7 @@ from aie.utils.trace import TraceConfig
 from aie.utils.verify import assert_close_with_benchmark
 
 
-@iron.jit()
+@iron.jit
 def single_core(
     A: In,
     B: In,

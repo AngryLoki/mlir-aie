@@ -21,7 +21,7 @@ from aie.utils.hostruntime.cli import run_design_cli
 from aie.utils.verify import assert_pass
 
 
-@iron.jit()
+@iron.jit
 def color_detect(
     in_tensor: In,
     _b_unused: In,
