@@ -48,7 +48,6 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Error.h"
@@ -376,50 +375,6 @@ inline mlir::LogicalResult checkStackSizeRequirements(mlir::ModuleOp module,
           << (coreOp.getStackSizeAttr() ? "stack_size is only "
                                         : "the default stack_size is only ")
           << effective << " bytes";
-  });
-  return result;
-}
-
-// Collect the deduplicated merge-mode link artifacts across every core of
-// `deviceOp`, for the unified-object path where the device's cores share one
-// LLVM module that is llvm-linked once. Duplicate references across cores
-// merge cleanly (the kernels are linkonce_odr) and each is inlined into its
-// caller.
-//
-// Fails if any path is merge-mode on one core and an ordinary link input on
-// another core of the same device: with one shared module the merged copy and
-// the object-linked copy would both define the kernel's symbols. The pass that
-// builds these lists normally diagnoses that, but aiecc can also be handed
-// pre-populated IR, so the check is repeated here.
-inline mlir::LogicalResult
-collectDeviceIRLinkFiles(xilinx::AIE::DeviceOp deviceOp,
-                         llvm::StringRef inputFile, llvm::StringRef workDir,
-                         std::vector<std::string> &files) {
-  files.clear();
-  llvm::StringSet<> merged;
-  deviceOp.walk([&](xilinx::AIE::CoreOp coreOp) {
-    for (auto &f : collectCoreIRLinkFiles(coreOp, inputFile, workDir))
-      if (merged.insert(f).second)
-        files.push_back(std::move(f));
-  });
-
-  mlir::LogicalResult result = mlir::success();
-  deviceOp.walk([&](xilinx::AIE::CoreOp coreOp) {
-    auto filesAttr = coreOp.getLinkFiles();
-    if (!filesAttr)
-      return;
-    for (auto f : filesAttr->getAsRange<mlir::StringAttr>()) {
-      if (!merged.contains(
-              resolveExternalPath(f.getValue(), inputFile, workDir)))
-        continue;
-      coreOp.emitError() << "link artifact '" << f.getValue()
-                         << "' is listed in link_files here but requested with "
-                            "link_with_mode = \"merge\" elsewhere in this "
-                            "device; a path cannot be both llvm-linked into "
-                            "the shared core module and object-linked, or its "
-                            "symbols are defined twice";
-      result = mlir::failure();
-    }
   });
   return result;
 }
