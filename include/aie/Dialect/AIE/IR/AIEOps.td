@@ -1641,17 +1641,14 @@ def AIE_BufferOp: AIE_Op<"buffer", [
     This operation represents a buffer in tile (3, 3) of 256 elements, each a 64-bit integer.
   }];
 
-  let arguments = (
-    ins Index:$tile,
-        OptionalAttr<StrAttr>:$sym_name,
-        OptionalAttr<AIEI32Attr>:$address,
-        OptionalAttr<ElementsAttr>:$initial_value,
-        // Pin the buffer to a specific L1 memory bank. A hard placement
-        // constraint: the buffer allocator reports ConstraintUnsatisfiable
-        // rather than silently placing the buffer in another bank.
-        OptionalAttr<AIEI32Attr>:$mem_bank,
-        DefaultValuedAttr<BoolAttr, "true">:$aligned
-  );
+  let arguments = (ins Index:$tile, OptionalAttr<StrAttr>:$sym_name,
+      OptionalAttr<AIEI32Attr>:$address,
+      OptionalAttr<ElementsAttr>:$initial_value,
+      // Pin the buffer to a specific L1 memory bank. A hard placement
+      // constraint: the buffer allocator reports ConstraintUnsatisfiable
+      // rather than silently placing the buffer in another bank.
+      OptionalAttr<AIEI32Attr>:$mem_bank,
+      DefaultValuedAttr<BoolAttr, "true">:$aligned);
 
   let results = (outs AnyMemRef:$buffer);
   let assemblyFormat = [{
