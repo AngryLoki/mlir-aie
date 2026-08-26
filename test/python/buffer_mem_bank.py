@@ -67,3 +67,34 @@ def passthrough_pinned_bank():
 
 
 print(passthrough_pinned_bank())
+
+
+# Buffer validates mem_bank the same way Worker validates stack_size/
+# reserved_data_size: a clear ValueError at construction time rather than an
+# opaque MLIR/pybind failure much later in the pipeline.
+try:
+    Buffer(np.ndarray[(4,), np.dtype[np.uint8]], mem_bank=-1)
+    raise AssertionError("expected ValueError for mem_bank < 0")
+except ValueError:
+    pass
+
+try:
+    Buffer(np.ndarray[(4,), np.dtype[np.uint8]], mem_bank="1")
+    raise AssertionError("expected ValueError for non-int mem_bank")
+except ValueError:
+    pass
+
+try:
+    Buffer(np.ndarray[(4,), np.dtype[np.uint8]], address=-1)
+    raise AssertionError("expected ValueError for address < 0")
+except ValueError:
+    pass
+
+try:
+    Buffer(np.ndarray[(4,), np.dtype[np.uint8]], address="0x1000")
+    raise AssertionError("expected ValueError for non-int address")
+except ValueError:
+    pass
+
+# CHECK: PASS
+print("PASS")

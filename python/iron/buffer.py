@@ -68,10 +68,27 @@ class Buffer(Resolvable):
                 (compiler-assigned).
 
         Raises:
-            ValueError: If neither ``type`` nor ``initial_value`` is provided.
+            ValueError: If neither ``type`` nor ``initial_value`` is provided, or if
+                ``address``/``mem_bank`` are provided but are not a non-negative int.
         """
         if type is None and initial_value is None:
             raise ValueError("Must provide either type, initial value, or both.")
+        if address is not None:
+            if not isinstance(address, int) or isinstance(address, bool):
+                raise ValueError(
+                    f"Buffer address must be an int, but got "
+                    f"{address.__class__.__name__}"
+                )
+            if address < 0:
+                raise ValueError(f"Buffer address must be >= 0, but got {address}")
+        if mem_bank is not None:
+            if not isinstance(mem_bank, int) or isinstance(mem_bank, bool):
+                raise ValueError(
+                    f"Buffer mem_bank must be an int, but got "
+                    f"{mem_bank.__class__.__name__}"
+                )
+            if mem_bank < 0:
+                raise ValueError(f"Buffer mem_bank must be >= 0, but got {mem_bank}")
         if type is None:
             assert initial_value is not None
             type = np.ndarray[initial_value.shape, np.dtype[initial_value.dtype.type]]
