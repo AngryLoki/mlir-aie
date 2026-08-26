@@ -405,19 +405,9 @@ public:
   std::optional<int64_t> findGap(int64_t lo, int64_t hi, int64_t size,
                                  int64_t alignBytes) const {
     assert(alignBytes > 0 && "alignment must be positive");
-    lo = std::max<int64_t>(lo, 0);
-    hi = std::min(hi, this->size());
     std::optional<int64_t> best;
     int64_t bestSlack = 0;
-    for (int64_t cursor = lo; cursor < hi;) {
-      int gapStart = occupied.find_first_unset_in(cursor, hi);
-      if (gapStart == -1)
-        break;
-      int nextTaken = occupied.find_first_in(gapStart, hi);
-      // find_first_in cannot return gapStart (it is clear), so gapEnd >
-      // gapStart >= cursor and the cursor always advances.
-      int64_t gapEnd = nextTaken == -1 ? hi : nextTaken;
-
+    forEachGap(lo, hi, [&](int64_t gapStart, int64_t gapEnd) {
       int64_t start = llvm::alignTo(gapStart, alignBytes);
       if (start + size <= gapEnd) {
         // Waste is measured across the whole gap, so a hole that would lose a
@@ -429,30 +419,41 @@ public:
           bestSlack = slack;
         }
       }
-      cursor = gapEnd;
-    }
+    });
     return best;
   }
 
   // Total free bytes in [lo, hi), for diagnostics that need to say how far
   // off a failed placement was, not just that it failed.
   int64_t freeBytes(int64_t lo, int64_t hi) const {
+    int64_t total = 0;
+    forEachGap(lo, hi, [&](int64_t gapStart, int64_t gapEnd) {
+      total += gapEnd - gapStart;
+    });
+    return total;
+  }
+
+private:
+  // Calls fn(gapStart, gapEnd) for every maximal free run in [lo, hi).
+  // Shared by findGap and freeBytes so the two can't drift on what counts as
+  // a gap.
+  template <typename Fn>
+  void forEachGap(int64_t lo, int64_t hi, Fn fn) const {
     lo = std::max<int64_t>(lo, 0);
     hi = std::min(hi, size());
-    int64_t total = 0;
     for (int64_t cursor = lo; cursor < hi;) {
       int gapStart = occupied.find_first_unset_in(cursor, hi);
       if (gapStart == -1)
         break;
       int nextTaken = occupied.find_first_in(gapStart, hi);
+      // find_first_in cannot return gapStart (it is clear), so gapEnd >
+      // gapStart >= cursor and the cursor always advances.
       int64_t gapEnd = nextTaken == -1 ? hi : nextTaken;
-      total += gapEnd - gapStart;
+      fn(gapStart, gapEnd);
       cursor = gapEnd;
     }
-    return total;
   }
 
-private:
   llvm::BitVector occupied;
 };
 } // namespace
