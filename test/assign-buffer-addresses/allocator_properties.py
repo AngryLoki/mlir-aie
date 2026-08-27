@@ -38,7 +38,11 @@ SEEDS = 200
 # a known, tracked gap rather than a hard failure of this whole file.
 MIN_SOLVED = SEEDS - 2
 MAX_NEEDLESS_CROSSINGS = 2
-MAX_BANK_IMBALANCE = 0.70  # mean (max-min)/bankSize over banks in use
+# Mean (max-min)/bankSize over banks in use. Counts the core's data region
+# alongside the buffers: the region occupies banks the same way a buffer does,
+# and scoring the banks it covers as empty would report imbalance for a layout
+# that has none. Measured at 0.58 with the region counted, 0.61 without.
+MAX_BANK_IMBALANCE = 0.70
 # Fragmentation: the fraction of the free bytes that survive as ONE run. The
 # generated linker script hands the core compiler a single region -- the
 # largest gap left between the stack and the buffers -- so this, not the total
@@ -197,19 +201,15 @@ def check_forced_cases(workdir):
     problems = []
     cfg = DEVICES[0]  # "core": reserved_data_size only applies where there's a core
     mlir, blocks, reserved = zero_size_reserved_data_case(cfg)
-    placed = allocate(mlir, workdir)
-    if placed is None:
+    result = allocate(mlir, workdir)
+    if result is None:
         problems.append(
             "zero_size_reserved_data: allocator rejected a provably-fitting design"
         )
     else:
+        placed, region = result
         bad = legality_violations(cfg, blocks, placed)
-        run, _ = largest_free_run(cfg, placed)
-        if reserved and run < reserved:
-            bad.append(
-                f"reserved_data_size {reserved} not honored, largest "
-                f"contiguous run is only {run}"
-            )
+        bad += region_violations(cfg, placed, region, reserved)
         problems.extend(f"zero_size_reserved_data: {b}" for b in bad)
     return problems
 
@@ -238,7 +238,10 @@ def stress_design(cfg, n_buffers):
 
 
 def allocate(mlir, workdir):
-    """Run the pass; returns {name: (addr, size, bank)} or None if it failed."""
+    """Run the pass; returns ({name: (addr, size, bank)}, region) or None.
+
+    `region` is the (origin, length) the allocator recorded on aie.core for the
+    core's own sections, or None on a tile with no core."""
     src = workdir / "case.mlir"
     src.write_text(mlir)
     p = subprocess.run(
@@ -249,7 +252,14 @@ def allocate(mlir, workdir):
     if p.returncode != 0:
         return None
     placed = {}
+    region = None
     for line in p.stdout.splitlines():
+        # The core's attribute dict prints on the line closing its body, so it
+        # is matched on its own rather than alongside the aie.core line.
+        origin = re.search(r"data_origin = (\d+)", line)
+        length = re.search(r"data_length = (\d+)", line)
+        if origin and length:
+            region = (int(origin.group(1)), int(length.group(1)))
         m = BUF_RE.search(line)
         if not m:
             continue
@@ -263,7 +273,41 @@ def allocate(mlir, workdir):
                 size,
                 int(mb.group(1)) if mb else None,
             )
-    return placed
+    return placed, region
+
+
+def region_violations(cfg, placed, region, reserved):
+    """The data region is a real placed object now, not a number measured after
+    the fact, so it gets checked like one: it must satisfy the request, sit
+    where nothing else does, and match what the linker-script emitter would
+    derive on its own -- that last one is what keeps the emitter's fallback
+    path honest."""
+    if region is None:
+        return []
+    origin, length = region
+    out = []
+    if reserved and length < reserved:
+        out.append(
+            f"granted data region is {length} bytes, smaller than the "
+            f"requested reserved_data_size {reserved}"
+        )
+    # A zero-length region covers no bytes, so it cannot sit anywhere illegal.
+    if length:
+        if origin < cfg["stack"]:
+            out.append(f"data region at {origin} starts inside the stack")
+        if origin + length > cfg["cap"]:
+            out.append(f"data region {origin}+{length} runs past the tile")
+        for name, (addr, size, _) in placed.items():
+            if size and addr < origin + length and origin < addr + size:
+                out.append(f"data region {origin}+{length} overlaps {name}")
+                break
+    start, best, _ = largest_free_run(cfg, placed)
+    if (origin, length) != (start, best):
+        out.append(
+            f"data region {origin}+{length} is not the largest free run "
+            f"{start}+{best}; the linker script's fallback would disagree"
+        )
+    return out
 
 
 def legality_violations(cfg, blocks, placed):
@@ -298,36 +342,51 @@ def legality_violations(cfg, blocks, placed):
 
 
 def largest_free_run(cfg, placed):
-    """(largest contiguous free run, total free bytes) above the stack."""
+    """(start of largest free run, its size, total free bytes) above the stack.
+
+    Ties go to the lowest address, matching largestFreeRun's `>` comparison, so
+    this can be compared against the region the allocator recorded."""
     cap, stack = cfg["cap"], cfg["stack"]
     taken = sorted((a, a + s) for a, s, _ in placed.values() if s)
-    best = total = 0
+    start = best = total = 0
     cursor = stack
     for lo, hi in taken:
         if lo > cursor:
-            best = max(best, lo - cursor)
+            if lo - cursor > best:
+                start, best = cursor, lo - cursor
             total += lo - cursor
         cursor = max(cursor, hi)
     if cursor < cap:
-        best = max(best, cap - cursor)
+        if cap - cursor > best:
+            start, best = cursor, cap - cursor
         total += cap - cursor
-    return best, total
+    return start, best, total
 
 
-def quality(cfg, blocks, placed):
+def quality(cfg, blocks, placed, region):
     bank = cfg["cap"] // cfg["banks"]
     by_name = {b["name"]: b for b in blocks}
     needless, per_bank = 0, defaultdict(int)
-    for name, (addr, size, _) in placed.items():
-        if size == 0:
-            continue
+
+    def charge_to_banks(addr, size):
         first, last = addr // bank, (addr + size - 1) // bank
-        # A buffer no larger than a bank never has to be split across two.
-        if by_name[name]["role"] == "free" and size <= bank and last != first:
-            needless += 1
         for bk in range(first, last + 1):
             lo, hi = max(addr, bk * bank), min(addr + size, (bk + 1) * bank)
             per_bank[bk] += hi - lo
+        return first, last
+
+    for name, (addr, size, _) in placed.items():
+        if size == 0:
+            continue
+        first, last = charge_to_banks(addr, size)
+        # A buffer no larger than a bank never has to be split across two.
+        if by_name[name]["role"] == "free" and size <= bank and last != first:
+            needless += 1
+    # The core's data region occupies banks just as a buffer does. Leaving it
+    # out would score the banks it covers as empty and report imbalance for a
+    # layout that has none -- a wrong metric, not a worse allocator.
+    if region and region[1]:
+        charge_to_banks(region[0], region[1])
     used = [per_bank.get(i, 0) for i in range(cfg["banks"])]
     return needless, (max(used) - min(used)) / bank
 
@@ -343,28 +402,25 @@ def main():
             if mlir is None:
                 continue
             total += 1
-            placed = allocate(mlir, workdir)
-            if placed is None:
+            result = allocate(mlir, workdir)
+            if result is None:
                 continue
+            placed, region = result
             solved += 1
             bad = legality_violations(cfg, blocks, placed)
-            run, free = largest_free_run(cfg, placed)
-            # The allocator reported success, so its own reservation
-            # acceptance test claims this run is big enough; if it isn't,
-            # that check is broken, not just this one design.
-            if reserved and run < reserved:
-                bad.append(
-                    f"reserved_data_size {reserved} not honored, largest "
-                    f"contiguous run is only {run}"
-                )
+            # The allocator reported success, so the region it recorded is what
+            # the core will actually be handed; check that directly rather than
+            # re-deriving what it ought to have been.
+            bad += region_violations(cfg, placed, region, reserved)
             if bad:
                 illegal.append(f"seed {seed} ({cfg['name']}): {bad[0]}")
-            n, imb = quality(cfg, blocks, placed)
+            _, run, free = largest_free_run(cfg, placed)
+            n, imb = quality(cfg, blocks, placed, region)
             needless += n
             imbalances.append(imb)
             if free:
                 contiguity.append(run / free)
-            if allocate(mlir, workdir) != placed:
+            if allocate(mlir, workdir) != result:
                 nondet += 1
 
         # A metric that never accumulated any samples despite solving designs
@@ -419,8 +475,9 @@ def main():
         stress_cfg = DEVICES[1]  # memtile: 512 KB, plenty of room for 300 tiny buffers
         stress_mlir = stress_design(stress_cfg, STRESS_BUFFERS)
         t0 = time.monotonic()
-        stress_placed = allocate(stress_mlir, workdir)
+        stress_result = allocate(stress_mlir, workdir)
         stress_elapsed = time.monotonic() - t0
+        stress_placed = stress_result[0] if stress_result else None
         report(
             "stress",
             stress_placed is not None and stress_elapsed <= STRESS_MAX_SECONDS,
