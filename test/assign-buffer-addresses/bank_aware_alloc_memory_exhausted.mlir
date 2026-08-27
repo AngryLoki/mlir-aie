@@ -13,21 +13,22 @@
 // enough that they could never have matched.
 // RUN: not aie-opt --aie-assign-bd-ids --aie-assign-buffer-addresses %s 2>&1 | FileCheck %s
 
-// The two 24576-byte buffers are larger than a bank, so they straddle; the
-// smaller ones then fill the space each straddle leaves behind in the bank it
-// runs into, which is what packs the tile tight enough to exhaust it.
-// CHECK: warning: Failed to allocate buffer: "_anonymous4" with size: 4096 bytes.
+// The two 24576-byte buffers are larger than a bank, so each straddles into
+// the next; the smaller ones fill what is left, packing the tile tight enough
+// to exhaust it.
+// CHECK: warning: Failed to allocate buffer: "_anonymous5" with size: 4096 bytes.
 // CHECK: warning: Not all requested buffers fit in the available memory.
 // CHECK: note: Current configuration of buffers in bank(s) : MemoryMap:
 // CHECK: (no stack allocated)
 // CHECK:         bank : 0        0x0-0x3FFF
 // CHECK:                 _anonymous0     : 0x0-0x5FFF     (24576 bytes) (straddles into bank 1)
 // CHECK:         bank : 1        0x4000-0x7FFF
-// CHECK:                 _anonymous3     : 0x6000-0x77FF          (6144 bytes)
+// CHECK:                 _anonymous1     : 0x6000-0xBFFF          (24576 bytes) (straddles into bank 2)
 // CHECK:         bank : 2        0x8000-0xBFFF
-// CHECK:                 _anonymous1     : 0x8000-0xDFFF          (24576 bytes) (straddles into bank 3)
 // CHECK:         bank : 3        0xC000-0xFFFF
-// CHECK:                 _anonymous2     : 0xE000-0xF7FF          (6144 bytes)
+// CHECK:                 _anonymous2     : 0xC000-0xD7FF          (6144 bytes)
+// CHECK:                 _anonymous3     : 0xD800-0xEFFF          (6144 bytes)
+// CHECK:                 _anonymous4     : 0xF000-0xFFFF          (4096 bytes)
 // CHECK: warning: Bank-aware allocation failed, trying basic sequential allocation.
 // CHECK: error: 'aie.tile' op allocated buffers exceeded available memory
 // CHECK: error: 'aie.tile' op Basic sequential allocation also failed.

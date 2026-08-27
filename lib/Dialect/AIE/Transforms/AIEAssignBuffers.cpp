@@ -515,6 +515,18 @@ public:
     return total;
   }
 
+  // Bytes of the enclosing free run that `size` bytes at `addr` would leave
+  // unused. Placement scoring uses this to prefer a tight fit, so that large
+  // clean regions stay available for buffers that need them.
+  int64_t slackAt(int64_t addr, int64_t size) const {
+    int64_t slack = 0;
+    forEachGap(0, this->size(), [&](int64_t gapStart, int64_t gapEnd) {
+      if (addr >= gapStart && addr + size <= gapEnd)
+        slack = (gapEnd - gapStart) - size;
+    });
+    return slack;
+  }
+
   // Largest single free run in [lo, hi). Distinct from freeBytes: a
   // reservation needs one contiguous run, so the total says nothing useful
   // about whether it fits.
@@ -727,8 +739,7 @@ static void printMemMap(TileOp tile, ArrayRef<BufferOp> allocatedBuffers,
 // rather than reporting the tile full. Returns false if there is no room for
 // the buffer at all; the caller reports which buffer failed.
 static bool setBufferAddress(BufferOp buffer, const BankAwareContext &ctx,
-                             int &startBankIndex, bool preferBankAligned,
-                             bool spreadAcrossBanks,
+                             int &startBankIndex,
                              const RequiredBanks &requiredBanks,
                              MemoryOccupancy &occupancy) {
   assert(startBankIndex < ctx.numBanks &&
@@ -770,37 +781,66 @@ static bool setBufferAddress(BufferOp buffer, const BankAwareContext &ctx,
     return false;
   }
 
-  // Spreading buffers over banks limits DMA contention, but it also chops the
-  // free space into per-bank holes. When the core needs a large contiguous run
-  // for its own data, the caller turns spreading off and everything packs from
-  // the bottom instead.
-  if (spreadAcrossBanks) {
-    for (int i = 0; i < ctx.numBanks; i++) {
-      int bank = (startBankIndex + i) % ctx.numBanks;
-      if (auto startAddr =
-              occupancy.findGap(ctx.bankLimits[bank].startAddr,
-                                ctx.bankLimits[bank].endAddr, size, alignBytes))
-        return place(*startAddr, bank);
-    }
-  }
-
-  // No single bank can hold it; straddle banks rather than give up. Search
-  // only the banked region so the result always maps back to a bank.
+  // Score every placement this buffer could take and keep the best, rather
+  // than trying one rule and falling back to another. The keys, in order:
+  //
+  //  1. banks touched, fewest first. Spanning a bank boundary costs DMA
+  //     bandwidth on every bank it lands in, so a buffer that fits one bank
+  //     should stay in one.
+  //  2. round-robin distance from the cursor, nearest first. Spreading over
+  //     banks is what limits DMA contention. Every single-bank placement ties
+  //     on key 1, so this only ever decides between placements that already
+  //     fit one bank -- exactly the old round-robin scan.
+  //  3. slack, tightest first, so large clean regions stay available.
+  //  4. address, lowest first, purely so the result is deterministic.
+  //
+  // Key 1 is what the old `preferBankAligned` was reaching for: it started a
+  // straddling buffer on a bank boundary in the hope of touching fewer banks,
+  // and the caller retried without it when that stranded too much. Measuring
+  // banks-touched directly makes a boundary start win only when it actually
+  // reduces them, so the retry folds in here.
   int64_t bankedEnd = ctx.bankLimits.back().endAddr;
   int64_t bankSize = bankedEnd / ctx.numBanks;
-  std::optional<int64_t> startAddr;
+  struct Candidate {
+    int64_t addr;
+    int bank;
+    int64_t banksTouched;
+    int64_t rrDistance;
+    int64_t slack;
+  };
+  std::optional<Candidate> best;
+  auto consider = [&](std::optional<int64_t> addr) {
+    if (!addr)
+      return;
+    int bank = getBankContaining(*addr, ctx.numBanks, ctx.bankLimits);
+    if (bank < 0)
+      return;
+    int64_t touched =
+        size == 0 ? 1 : (*addr + size - 1) / bankSize - *addr / bankSize + 1;
+    Candidate c{*addr, bank, touched,
+                (bank - startBankIndex + ctx.numBanks) % ctx.numBanks,
+                occupancy.slackAt(*addr, size)};
+    auto rank = [](const Candidate &x) {
+      return std::tie(x.banksTouched, x.rrDistance, x.slack, x.addr);
+    };
+    if (!best || rank(c) < rank(*best))
+      best = c;
+  };
+
+  for (int i = 0; i < ctx.numBanks; i++)
+    consider(occupancy.findGap(ctx.bankLimits[i].startAddr,
+                               ctx.bankLimits[i].endAddr, size, alignBytes));
+  // Nothing may fit a single bank; straddling is better than giving up.
+  // Searched over the banked region only, so the result always maps to a bank.
+  consider(occupancy.findGap(0, bankedEnd, size, alignBytes));
   // Only ask for bank-boundary starts when a bank boundary actually satisfies
   // the buffer's own alignment; otherwise this would silently search on a
   // stride that is neither a bank boundary nor what was intended.
-  if (preferBankAligned && bankSize % alignBytes == 0)
-    startAddr = occupancy.findGap(0, bankedEnd, size, bankSize);
-  if (!startAddr)
-    startAddr = occupancy.findGap(0, bankedEnd, size, alignBytes);
-  if (startAddr) {
-    int bank = getBankContaining(*startAddr, ctx.numBanks, ctx.bankLimits);
-    assert(bank >= 0 && "a gap inside the banked region belongs to a bank");
-    return place(*startAddr, bank);
-  }
+  if (bankSize % alignBytes == 0)
+    consider(occupancy.findGap(0, bankedEnd, size, bankSize));
+
+  if (best)
+    return place(best->addr, best->bank);
 
   // A zero-sized buffer covers no bytes, so a tile with no hole left in it can
   // still hold one. It is excluded from the overlap checks for the same
@@ -817,14 +857,13 @@ static bool setBufferAddress(BufferOp buffer, const BankAwareContext &ctx,
 // attempt can be rolled back.
 static BufferOp placeFreeBuffers(ArrayRef<BufferOp> buffersToAlloc,
                                  const BankAwareContext &ctx,
-                                 bool preferBankAligned, bool spreadAcrossBanks,
                                  const RequiredBanks &requiredBanks,
                                  MemoryOccupancy &occupancy,
                                  SmallVectorImpl<BufferOp> &placed) {
   int startBankIndex = 0;
   for (auto buffer : buffersToAlloc) {
-    if (!setBufferAddress(buffer, ctx, startBankIndex, preferBankAligned,
-                          spreadAcrossBanks, requiredBanks, occupancy))
+    if (!setBufferAddress(buffer, ctx, startBankIndex, requiredBanks,
+                          occupancy))
       return buffer;
     placed.push_back(buffer);
   }
@@ -1020,9 +1059,8 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
   ArrayRef<BufferOp> pinnedPrefix(order.begin(), pinnedEnd);
   ArrayRef<BufferOp> freeSuffix(pinnedEnd, order.end());
 
-  BufferOp failedBuffer = placeFreeBuffers(
-      pinnedPrefix, ctx, /*preferBankAligned=*/true,
-      /*spreadAcrossBanks=*/true, requiredBanks, occupancy, allocatedBuffers);
+  BufferOp failedBuffer = placeFreeBuffers(pinnedPrefix, ctx, requiredBanks,
+                                           occupancy, allocatedBuffers);
 
   std::optional<MemoryRun> dataPlaceholder;
   if (!failedBuffer) {
@@ -1034,9 +1072,8 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
       deAllocationBuffers(allocatedBuffers, requiredBanks);
       return BankAwareResult::OutOfMemory;
     }
-    failedBuffer = placeFreeBuffers(freeSuffix, ctx, /*preferBankAligned=*/true,
-                                    /*spreadAcrossBanks=*/true, requiredBanks,
-                                    occupancy, allocatedBuffers);
+    failedBuffer = placeFreeBuffers(freeSuffix, ctx, requiredBanks, occupancy,
+                                    allocatedBuffers);
   }
 
   if (BufferOp failed = failedBuffer) {
