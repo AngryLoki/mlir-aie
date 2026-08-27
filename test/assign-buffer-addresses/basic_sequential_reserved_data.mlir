@@ -24,6 +24,9 @@
 // CHECK-LABEL: module @reservation_fits
 // CHECK: %a = aie.buffer(%tile_0_2) {address = 1024 : i32, sym_name = "a"} : memref<16384xi8>
 // CHECK: %b = aie.buffer(%tile_0_2) {address = 17408 : i32, sym_name = "b"} : memref<16384xi8>
+// The granted region the linker script is handed. It is the run that survived
+// placement, so it is >= reserved_data_size rather than equal to it.
+// CHECK: data_length = 31744 : i32, data_origin = 33792 : i32
 module @reservation_fits {
   aie.device(npu2) {
     %tile_0_2 = aie.tile(0, 2)

@@ -68,16 +68,40 @@ static void sortBuffersByAddress(SmallVectorImpl<BufferOp> &buffers) {
   });
 }
 
-// Free run left for the core's own sections, computed the way
-// AIETargetLdScript computes the `data` region it hands the core compiler.
-static int64_t coreFreeRun(int64_t memSize, int64_t stackSize,
-                           ArrayRef<BufferOp> buffers) {
+// The region the core compiler gets for its own sections, computed the way
+// AIETargetLdScript's fallback computes the `data` region. Both call the
+// shared largestFreeRun on the same interval list, so the value stamped on the
+// CoreOp and the value that emitter would derive cannot drift apart.
+static MemoryRun coreDataRun(int64_t memSize, int64_t stackSize,
+                             ArrayRef<BufferOp> buffers) {
   SmallVector<std::pair<int64_t, int64_t>> occupied;
   occupied.emplace_back(0, stackSize);
   for (auto buffer : buffers)
     if (auto addr = buffer.getAddress())
       occupied.emplace_back(*addr, *addr + buffer.getAllocationSize());
-  return largestFreeRun(memSize, std::move(occupied)).size;
+  return largestFreeRun(memSize, std::move(occupied));
+}
+
+// Record where the core's data region ended up, for AIETargetLdScript to emit
+// verbatim. No-op on a tile with no core: memtiles and shims have no compiled
+// sections of their own, and no linker script is generated for them.
+static void stampCoreDataRegion(TileOp tile, MemoryRun run) {
+  CoreOp core = tile.getCoreOp();
+  if (!core)
+    return;
+  Builder b(tile.getContext());
+  core.setDataOriginAttr(b.getI32IntegerAttr(run.start));
+  core.setDataLengthAttr(b.getI32IntegerAttr(run.size));
+}
+
+// Called at the top of each scheme so a stamp from an earlier run -- or from
+// an attempt that then failed -- is never left behind describing a placement
+// that no longer exists.
+static void clearCoreDataStamp(TileOp tile) {
+  if (CoreOp core = tile.getCoreOp()) {
+    core->removeAttr("data_origin");
+    core->removeAttr("data_length");
+  }
 }
 
 static bool isBufferPreAllocated(BufferOp buffer) {
@@ -232,6 +256,8 @@ static bool basicAllocation(TileOp tile) {
   if (!device)
     return false;
 
+  clearCoreDataStamp(tile);
+
   auto [maxDataMemorySize, tileAlignBitWidth] =
       tileMemoryLimits(tile, getTargetModel(tile));
 
@@ -339,14 +365,16 @@ static bool basicAllocation(TileOp tile) {
   }
 
   // Check if memory was exceeded or buffers overlap, and print debug info.
-  return (checkAndPrintOverlapStackframe(stacksize, allBuffers_on_tile) &&
-          checkAndPrintBufferOverlap(allBuffers_on_tile, tileAlignBitWidth) &&
-          checkAndPrintOverflow(tile, highWater, maxDataMemorySize, stacksize,
-                                allBuffers_on_tile) &&
-          checkAndPrintReservedData(
-              tile,
-              coreFreeRun(maxDataMemorySize, stacksize, allBuffers_on_tile),
-              reservedData));
+  MemoryRun dataRun =
+      coreDataRun(maxDataMemorySize, stacksize, allBuffers_on_tile);
+  if (!checkAndPrintOverlapStackframe(stacksize, allBuffers_on_tile) ||
+      !checkAndPrintBufferOverlap(allBuffers_on_tile, tileAlignBitWidth) ||
+      !checkAndPrintOverflow(tile, highWater, maxDataMemorySize, stacksize,
+                             allBuffers_on_tile) ||
+      !checkAndPrintReservedData(tile, dataRun.size, reservedData))
+    return false;
+  stampCoreDataRegion(tile, dataRun);
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -854,7 +882,8 @@ static StrategyAttemptResult tryAllocationStrategies(
       continue;
     result.placedEverything = true;
     int64_t freeRun =
-        coreFreeRun(ctx.maxDataMemorySize, ctx.stacksize, allBuffers_on_tile);
+        coreDataRun(ctx.maxDataMemorySize, ctx.stacksize, allBuffers_on_tile)
+            .size;
     result.bestFreeRun = std::max(result.bestFreeRun, freeRun);
     if (freeRun >= ctx.reservedData)
       break;
@@ -866,6 +895,8 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
   auto device = tile->getParentOfType<AIE::DeviceOp>();
   if (!device)
     return BankAwareResult::OutOfMemory;
+
+  clearCoreDataStamp(tile);
 
   std::vector<BankLimits> bankLimits; // the entries contain pairs of start and
                                       // end addresses for each bank
@@ -976,6 +1007,8 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
   if (!checkAndPrintOverlapStackframe(stacksize, allBuffers_on_tile) ||
       !checkAndPrintBufferOverlap(allBuffers_on_tile, tileAlignBitWidth))
     return BankAwareResult::OutOfMemory;
+  stampCoreDataRegion(
+      tile, coreDataRun(maxDataMemorySize, stacksize, allBuffers_on_tile));
   return BankAwareResult::Success;
 }
 

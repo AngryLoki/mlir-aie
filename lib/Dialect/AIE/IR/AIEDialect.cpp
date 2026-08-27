@@ -1871,17 +1871,23 @@ LogicalResult CoreOp::verify() {
   if (auto origin = getDataOrigin()) {
     int64_t length = *getDataLength();
     int64_t stackSize = getEffectiveStackSize();
-    if (*origin < stackSize)
-      return emitOpError("data region at 0x")
-             << llvm::utohexstr(*origin) << " starts below the stack ("
-             << stackSize << " bytes)";
-    int64_t localMem = getTargetModel(*this).getLocalMemorySize();
-    if (*origin + length > localMem)
-      return emitOpError("data region 0x")
-             << llvm::utohexstr(*origin) << "-0x"
-             << llvm::utohexstr(*origin + length - 1)
-             << " runs past the end of this tile's memory (" << localMem
-             << " bytes total)";
+    // A zero-length region covers no bytes, so it cannot sit anywhere illegal.
+    // It is what the allocator records for a tile with no free space left, and
+    // it is reported at origin 0 -- which would otherwise read as "below the
+    // stack". Only a region that actually spans bytes has a placement to check.
+    if (length > 0) {
+      if (*origin < stackSize)
+        return emitOpError("data region at 0x")
+               << llvm::utohexstr(*origin) << " starts below the stack ("
+               << stackSize << " bytes)";
+      int64_t localMem = getTargetModel(*this).getLocalMemorySize();
+      if (*origin + length > localMem)
+        return emitOpError("data region 0x")
+               << llvm::utohexstr(*origin) << "-0x"
+               << llvm::utohexstr(*origin + length - 1)
+               << " runs past the end of this tile's memory (" << localMem
+               << " bytes total)";
+    }
     // The grant exists to satisfy the request; a grant that does not is a
     // bookkeeping bug in whatever wrote it, not a design the core can link.
     if (auto reserved = getReservedDataSize(); reserved && length < *reserved)

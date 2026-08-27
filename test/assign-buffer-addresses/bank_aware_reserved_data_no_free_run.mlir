@@ -17,6 +17,11 @@
 // RUN: aie-opt --aie-assign-buffer-addresses="alloc-scheme=bank-aware" %s | FileCheck %s
 
 // CHECK: %a = aie.buffer(%tile_0_2) {address = 1024 : i32, aligned = false, mem_bank = 0 : i32, sym_name = "a"} : memref<64512xi8>
+// Nothing is left over, so the granted region is empty -- and reserved_data_size
+// is 0 here, so an empty grant still satisfies the request. This is the case
+// that would read as "region below the stack" if a zero-length run were checked
+// for placement like a real one.
+// CHECK: data_length = 0 : i32, data_origin = 0 : i32
 module @zero_free_run_zero_reservation {
   aie.device(npu2) {
     %tile_0_2 = aie.tile(0, 2)

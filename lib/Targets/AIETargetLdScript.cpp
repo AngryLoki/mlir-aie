@@ -99,16 +99,24 @@ LogicalResult xilinx::AIE::AIETranslateToLdScript(ModuleOp module,
         // A pass that added a buffer to this tile after the allocator ran
         // would silently alias the core's own .data/.bss. Fail loudly instead
         // of quietly falling back, which would hide the pipeline-ordering bug
-        // that produced it.
+        // that produced it. A zero-length region covers no bytes, so it can
+        // collide with nothing and is skipped for the same reason zero-sized
+        // buffers are excluded from the allocator's overlap checks.
         int64_t dataEnd = dataRun.start + dataRun.size;
-        if (dataRun.start < stackSize)
+        if (dataRun.size > 0 && dataRun.start < stackSize)
           return tile.emitOpError("recorded data region at 0x")
                  << llvm::utohexstr(dataRun.start)
                  << " overlaps this core's stack (" << stackSize << " bytes)";
         for (auto buf : buffers[tiles[srcCoord]]) {
+          // A zero-sized buffer covers no bytes, so it does not collide with
+          // the region even when its address falls inside it -- the same rule
+          // largestFreeRun applies when it refuses to split a run at a
+          // zero-length interval.
+          if (buf.getAllocationSize() == 0)
+            continue;
           int64_t bufStart = getBufferBaseAddress(buf);
           int64_t bufEnd = bufStart + buf.getAllocationSize();
-          if (bufStart < dataEnd && dataRun.start < bufEnd)
+          if (dataRun.size > 0 && bufStart < dataEnd && dataRun.start < bufEnd)
             return tile.emitOpError("recorded data region 0x")
                    << llvm::utohexstr(dataRun.start) << "-0x"
                    << llvm::utohexstr(dataEnd - 1) << " overlaps buffer '"

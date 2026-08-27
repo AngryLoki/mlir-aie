@@ -24,6 +24,7 @@
 // A reservation that only fits in the larger [24576, 65536) run must be
 // placed there, with the bank pin undisturbed.
 // CHECK: %mid = aie.buffer(%tile_0_2) {address = 16384 : i32, mem_bank = 1 : i32, sym_name = "mid"} : memref<8192xi8>
+// CHECK: data_length = 40960 : i32, data_origin = 24576 : i32
 module @fits_around_the_pin {
   aie.device(npu2) {
     %tile_0_2 = aie.tile(0, 2)

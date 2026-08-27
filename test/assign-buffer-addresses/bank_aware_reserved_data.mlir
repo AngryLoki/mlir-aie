@@ -20,6 +20,7 @@
 // CHECK: %a = aie.buffer(%tile_0_2) {address = 1024 : i32, mem_bank = 0 : i32, sym_name = "a"} : memref<4096xi8>
 // CHECK: %b = aie.buffer(%tile_0_2) {address = 16384 : i32, mem_bank = 1 : i32, sym_name = "b"} : memref<4096xi8>
 // CHECK: %c = aie.buffer(%tile_0_2) {address = 32768 : i32, mem_bank = 2 : i32, sym_name = "c"} : memref<4096xi8>
+// CHECK: data_length = 28672 : i32, data_origin = 36864 : i32
 module @no_reservation_spreads {
   aie.device(npu2) {
     %tile_0_2 = aie.tile(0, 2)
