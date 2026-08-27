@@ -24,7 +24,12 @@
 // RUN: clang++ --target=aie2p-none-unknown-elf -std=c++20 -O2 -DNDEBUG -c %S/reserved_data_size_measured_kernel.cc -o %t.d/reserved_data_size_measured_kernel.o
 // RUN: cd %t.d && not %aiecc %s 2>&1 | FileCheck %s
 
-// CHECK: warning: buffers leave only 6144 contiguous bytes for the core's data sections, which need 8448 bytes
+// Only basic-sequential reports the shortfall this way now. Bank-aware places
+// the reservation up front, so it fails on whatever could not go around it
+// rather than by measuring what survived; basic-sequential is a bottom-packing
+// bump pointer with nothing to aim at, so measure-then-fail stays the honest
+// algorithm there. Either way the build stops here, which is the point: the
+// CHECK-NOTs below assert the user never reaches the raw linker error.
 // CHECK: warning: Bank-aware allocation failed, trying basic sequential allocation.
 // CHECK: warning: buffers leave only 6144 contiguous bytes for the core's data sections, which need 8448 bytes.
 // CHECK: error: 'aie.tile' op Basic sequential allocation also failed.

@@ -35,7 +35,10 @@
 // CHECK: %b2 = aie.buffer(%mem_tile_0_1) {address = 17144 : i32, mem_bank = 0 : i32, sym_name = "b2"} : memref<7808xi8>
 // CHECK: %b4 = aie.buffer(%mem_tile_0_1) {address = 194948 : i32, mem_bank = 2 : i32, sym_name = "b4"} : memref<13536xi8>
 // CHECK: %b5 = aie.buffer(%mem_tile_0_1) {address = 208484 : i32, mem_bank = 3 : i32, sym_name = "b5"} : memref<191939xi8>
-// CHECK: %b6 = aie.buffer(%mem_tile_0_1) {address = 400424 : i32, mem_bank = 6 : i32, sym_name = "b6"} : memref<22216xi8>
+// b6 is bank-pinned, so it is placed before the unconstrained buffers and
+// slides to the far end of bank 6 rather than its start -- the position that
+// leaves the free space above b5's tail in one run instead of two.
+// CHECK: %b6 = aie.buffer(%mem_tile_0_1) {address = 436536 : i32, mem_bank = 6 : i32, sym_name = "b6"} : memref<22216xi8>
 
 module {
   aie.device(npu2) {

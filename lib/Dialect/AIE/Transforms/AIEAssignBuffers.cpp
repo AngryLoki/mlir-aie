@@ -426,6 +426,60 @@ public:
       occupied.set(start, end);
   }
 
+  // Undo a markOccupied. Only used to lift the core's data-region placeholder
+  // once every buffer is placed: nothing can have been placed inside it while
+  // it was marked, so clearing exactly its range is exact rather than
+  // approximate.
+  void markFree(int64_t start, int64_t end) {
+    assert(start >= 0 && end <= size() && start <= end &&
+           "range must lie inside the tile");
+    if (start < end)
+      occupied.reset(start, end);
+  }
+
+  // Placement for `size` bytes in [lo, hi) that leaves the largest single free
+  // run behind anywhere in [0, size()), or nullopt when nothing fits.
+  //
+  // For an object placed *before* the unconstrained buffers -- the core's data
+  // region, or a bank-pinned buffer -- where it sits inside the space it is
+  // allowed to use is not arbitrary. Dropped into the middle of a hole it
+  // bisects the free space, and a later buffer needing one long run has
+  // nowhere to go; slid flush against something already occupied it takes the
+  // same bytes and leaves the remainder whole. Both such objects are
+  // indifferent to which end they land on, so pick by what survives.
+  //
+  // Only the two flush positions of each candidate hole are considered, since
+  // any placement strictly inside a hole leaves strictly less contiguous space
+  // than flushing to one of its ends.
+  std::optional<int64_t> findLeastFragmentingGap(int64_t lo, int64_t hi,
+                                                 int64_t size,
+                                                 int64_t alignBytes) const {
+    assert(alignBytes > 0 && "alignment must be positive");
+    std::optional<int64_t> best;
+    int64_t bestRun = -1;
+    auto consider = [&](int64_t start) {
+      MemoryOccupancy trial = *this;
+      trial.markOccupied(start, start + size);
+      int64_t run = trial.largestGap(0, this->size());
+      // Ties go to the lowest address, so placement stays deterministic.
+      if (run > bestRun || (run == bestRun && best && start < *best)) {
+        bestRun = run;
+        best = start;
+      }
+    };
+    forEachGap(lo, hi, [&](int64_t gapStart, int64_t gapEnd) {
+      int64_t low = llvm::alignTo(gapStart, alignBytes);
+      if (low + size > gapEnd)
+        return;
+      consider(low);
+      // Flush to the top, then back down to the alignment; that can only move
+      // the start lower, and never below `low`.
+      consider(
+          std::max<int64_t>(llvm::alignDown(gapEnd - size, alignBytes), low));
+    });
+    return best;
+  }
+
   // Start of the tightest gap in [lo, hi) that holds `size` bytes, or nullopt.
   // Ties go to the lowest address, so placement is deterministic. Candidate
   // starts are aligned up *before* the fit test, so a gap is never rejected
@@ -459,6 +513,17 @@ public:
       total += gapEnd - gapStart;
     });
     return total;
+  }
+
+  // Largest single free run in [lo, hi). Distinct from freeBytes: a
+  // reservation needs one contiguous run, so the total says nothing useful
+  // about whether it fits.
+  int64_t largestGap(int64_t lo, int64_t hi) const {
+    int64_t best = 0;
+    forEachGap(lo, hi, [&](int64_t gapStart, int64_t gapEnd) {
+      best = std::max(best, gapEnd - gapStart);
+    });
+    return best;
   }
 
 private:
@@ -683,9 +748,16 @@ static bool setBufferAddress(BufferOp buffer, const BankAwareContext &ctx,
   auto required = requiredBanks.find(buffer);
   if (required != requiredBanks.end()) {
     int bank = required->second;
-    if (auto startAddr =
-            occupancy.findGap(ctx.bankLimits[bank].startAddr,
-                              ctx.bankLimits[bank].endAddr, size, alignBytes)) {
+    // Where inside the bank matters, because this buffer is placed before the
+    // unconstrained ones. A small pinned buffer dropped into the middle of the
+    // free space bisects it, and a large buffer that needs a run spanning
+    // several banks then has nowhere to go -- even though sliding the pinned
+    // one to the end of its bank would have left that run intact. Its own
+    // constraint is satisfied anywhere in the bank, so pick the spot that
+    // leaves the largest single run behind.
+    if (auto startAddr = occupancy.findLeastFragmentingGap(
+            ctx.bankLimits[bank].startAddr, ctx.bankLimits[bank].endAddr, size,
+            alignBytes)) {
       placeBuffer(buffer, *startAddr, bank, occupancy);
       return true;
     }
@@ -817,78 +889,61 @@ static LogicalResult placePreAllocatedBuffers(
   return success();
 }
 
-// What one call to tryAllocationStrategies found: the first buffer that a
-// strategy failed to place (null if some strategy placed everything), whether
-// any strategy placed every buffer at all, and the best contiguous run any
-// such strategy left for the core's own data.
-struct StrategyAttemptResult {
-  BufferOp failed = nullptr;
-  bool placedEverything = false;
-  int64_t bestFreeRun = 0;
-};
-
-// Packing around fixed obstacles has no cheap optimal answer, so rather than
-// trusting one greedy order, try a few (each a handful of bitmap scans) and
-// keep the first that fits. Buffers always go largest first, so small ones
-// cannot fragment the clean regions large ones need; the two knobs are
-// whether a bank-pinned buffer goes before the unconstrained ones (first
-// guarantees it a home, later avoids it bisecting a free run that spans
-// banks) and whether a straddling buffer starts on a bank boundary (fewest
-// banks touched, but strands the space ahead of it). The last entry gives up
-// bank spreading entirely and packs from the bottom -- the only one that can
-// leave a large contiguous run for the core's own data, so it is what a
-// tight `reserved_data_size` falls back to.
+// Order buffers for placement: bank-pinned first, then largest first.
 //
-// Placing every buffer is not enough on its own: the core compiler is handed
-// the largest gap left over, so a layout that fits but strands the core's own
-// data is no good either. A later strategy failing to place everything must
-// not hide an earlier one that fit but left too little room for
-// `reservedData` -- that shortfall is the actionable diagnostic -- so the best
-// free run across all attempts is tracked regardless of which one is last.
-static StrategyAttemptResult tryAllocationStrategies(
-    ArrayRef<BufferOp> buffersToAlloc, const BankAwareContext &ctx,
-    const RequiredBanks &requiredBanks, MemoryOccupancy &occupancy,
-    const MemoryOccupancy &pinnedOnly,
-    SmallVectorImpl<BufferOp> &allocatedBuffers,
-    ArrayRef<BufferOp> allBuffers_on_tile) {
-  static constexpr struct {
-    bool bankConstrainedFirst;
-    bool preferBankAligned;
-    bool spreadAcrossBanks;
-  } strategies[] = {{true, true, true},
-                    {true, false, true},
-                    {false, false, true},
-                    {true, false, false}};
+// Bank-pinned first is the standard most-constrained-variable rule -- a
+// `mem_bank` request has exactly one candidate bank, so it has the least room
+// to move and the least chance of finding a home later. Largest first among
+// the rest keeps small buffers from fragmenting the clean regions the large
+// ones need.
+static SmallVector<BufferOp>
+placementOrder(ArrayRef<BufferOp> buffersToAlloc,
+               const RequiredBanks &requiredBanks) {
+  SmallVector<BufferOp> order(buffersToAlloc.begin(), buffersToAlloc.end());
+  llvm::stable_sort(order, [&](BufferOp a, BufferOp b) {
+    if (requiredBanks.count(a) != requiredBanks.count(b))
+      return requiredBanks.count(a) > requiredBanks.count(b);
+    return a.getAllocationSize() > b.getAllocationSize();
+  });
+  return order;
+}
 
-  StrategyAttemptResult result;
-  for (auto strategy : strategies) {
-    deAllocationBuffers(allocatedBuffers, requiredBanks);
-    allocatedBuffers.clear();
-    occupancy = pinnedOnly;
-    // Sorted into a fresh vector each time, so every strategy's order is
-    // relative to the original walk order rather than to whatever the previous
-    // strategy's sort happened to leave behind.
-    SmallVector<BufferOp> order(buffersToAlloc.begin(), buffersToAlloc.end());
-    llvm::stable_sort(order, [&](BufferOp a, BufferOp b) {
-      if (strategy.bankConstrainedFirst &&
-          requiredBanks.count(a) != requiredBanks.count(b))
-        return requiredBanks.count(a) > requiredBanks.count(b);
-      return a.getAllocationSize() > b.getAllocationSize();
-    });
-    result.failed = placeFreeBuffers(order, ctx, strategy.preferBankAligned,
-                                     strategy.spreadAcrossBanks, requiredBanks,
-                                     occupancy, allocatedBuffers);
-    if (result.failed)
-      continue;
-    result.placedEverything = true;
-    int64_t freeRun =
-        coreDataRun(ctx.maxDataMemorySize, ctx.stacksize, allBuffers_on_tile)
-            .size;
-    result.bestFreeRun = std::max(result.bestFreeRun, freeRun);
-    if (freeRun >= ctx.reservedData)
-      break;
+// Reserve `reservedData` contiguous bytes for the core's own sections, as a
+// placeholder the free buffers cannot then place into.
+//
+// This runs *after* the bank-pinned buffers and before the unconstrained ones.
+// The order is deliberate: a region placed before the pins could take the only
+// space a `mem_bank` request -- a hard constraint the user wrote -- had left,
+// turning a working design into a constraint error. Pins first can only make
+// the region's own search harder, never make a hard constraint unsatisfiable.
+//
+// Returns the placeholder's range, or nullopt when nothing large enough is
+// free, in which case a diagnostic has already been emitted.
+static std::optional<MemoryRun>
+reserveCoreDataRegion(TileOp tile, const BankAwareContext &ctx,
+                      MemoryOccupancy &occupancy) {
+  if (ctx.reservedData <= 0)
+    return MemoryRun{0, 0};
+  // Byte alignment: the linker script's ORIGIN has always been an arbitrary
+  // byte, and asking for more here only shrinks the set of placements that fit.
+  if (auto start = occupancy.findLeastFragmentingGap(
+          0, ctx.maxDataMemorySize, ctx.reservedData, /*alignBytes=*/1)) {
+    occupancy.markOccupied(*start, *start + ctx.reservedData);
+    return MemoryRun{*start, ctx.reservedData};
   }
-  return result;
+
+  // Emitted before any free buffer is placed, so the only things in the way are
+  // the stack and the user's own pins -- a short, actionable list rather than
+  // "some buffer somewhere did not fit".
+  tile.emitOpError("cannot reserve ")
+      << ctx.reservedData
+      << " contiguous bytes for this core's data sections "
+         "(reserved_data_size); the largest free run is "
+      << occupancy.largestGap(0, ctx.maxDataMemorySize)
+      << " bytes. Only the stack and this tile's address- or bank-pinned "
+         "buffers are placed at this point, so it is one of those, or the "
+         "reservation itself, that has to give";
+  return std::nullopt;
 }
 
 static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
@@ -945,28 +1000,46 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
                                       requiredBanks, buffersToAlloc)))
     return BankAwareResult::ConstraintUnsatisfiable;
 
-  // Keeps track of buffers allocated by the strategy portfolio below, to be
-  // able to deallocate in case of failure and print helpful debug info about
-  // them. This does not include the pre-allocated buffers.
+  // Keeps track of buffers this pass placed, to be able to deallocate in case
+  // of failure and print helpful debug info about them. This does not include
+  // the pre-allocated buffers.
   SmallVector<BufferOp> allocatedBuffers;
-  MemoryOccupancy pinnedOnly = occupancy;
-  StrategyAttemptResult attempt =
-      tryAllocationStrategies(buffersToAlloc, ctx, requiredBanks, occupancy,
-                              pinnedOnly, allocatedBuffers, allBuffers_on_tile);
 
-  if (attempt.placedEverything && attempt.bestFreeRun < reservedData) {
-    // Every buffer fit, but not with enough contiguous room left over for the
-    // core's own data, which the linker script hands out as a single region.
-    tile.emitWarning("buffers leave only ")
-        << attempt.bestFreeRun
-        << " contiguous bytes for the core's data sections, "
-        << "which need " << reservedData
-        << " bytes. Every buffer was placed, so the memory map is not the "
-           "interesting part; the free space is simply too broken up.";
-    deAllocationBuffers(allocatedBuffers, requiredBanks);
-    return BankAwareResult::OutOfMemory;
+  // One pass, in three steps. Buffers are ordered once (most-constrained
+  // first, then largest first); the bank-pinned prefix goes down, then the
+  // core's data region is placed into what is left, then the unconstrained
+  // buffers fill in around it.
+  //
+  // The region is placed rather than measured afterwards, which is what lets
+  // this be a single pass at all: the old code could only check the leftover
+  // run once everything was down, so a shortfall meant re-placing everything
+  // in a different order and checking again.
+  SmallVector<BufferOp> order = placementOrder(buffersToAlloc, requiredBanks);
+  auto pinnedEnd = llvm::partition_point(
+      order, [&](BufferOp b) { return requiredBanks.count(b) > 0; });
+  ArrayRef<BufferOp> pinnedPrefix(order.begin(), pinnedEnd);
+  ArrayRef<BufferOp> freeSuffix(pinnedEnd, order.end());
+
+  BufferOp failedBuffer = placeFreeBuffers(
+      pinnedPrefix, ctx, /*preferBankAligned=*/true,
+      /*spreadAcrossBanks=*/true, requiredBanks, occupancy, allocatedBuffers);
+
+  std::optional<MemoryRun> dataPlaceholder;
+  if (!failedBuffer) {
+    dataPlaceholder = reserveCoreDataRegion(tile, ctx, occupancy);
+    if (!dataPlaceholder) {
+      // reserveCoreDataRegion has already reported which obstacle is in the
+      // way. Fall through to basic-sequential the way any other out-of-room
+      // outcome does; it packs from the bottom and may still leave the run.
+      deAllocationBuffers(allocatedBuffers, requiredBanks);
+      return BankAwareResult::OutOfMemory;
+    }
+    failedBuffer = placeFreeBuffers(freeSuffix, ctx, /*preferBankAligned=*/true,
+                                    /*spreadAcrossBanks=*/true, requiredBanks,
+                                    occupancy, allocatedBuffers);
   }
-  if (BufferOp failed = attempt.failed) {
+
+  if (BufferOp failed = failedBuffer) {
     // A buffer pinned to a bank that cannot hold it is a constraint the user
     // wrote, not a tile that ran out of room, so it gets its own error and no
     // memory map.
@@ -991,6 +1064,27 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
     failed.emitWarning("Failed to allocate buffer: ")
         << failed.name() << " with size: " << failed.getAllocationSize()
         << " bytes.";
+    // The reservation is invisible in the memory map -- it is a placeholder in
+    // the bitmap, not a buffer -- so without this a user sees only that some
+    // buffer did not fit, with no hint that a reservation took the space. Say
+    // whether lifting it would have been enough, so the next step is either
+    // "shrink reserved_data_size" or "this tile is genuinely full".
+    if (dataPlaceholder && dataPlaceholder->size) {
+      MemoryOccupancy without = occupancy;
+      without.markFree(dataPlaceholder->start,
+                       dataPlaceholder->start + dataPlaceholder->size);
+      int64_t need = failed.getAllocationSize();
+      bool wouldFit =
+          without.largestGap(0, ctx.maxDataMemorySize) >= need || need == 0;
+      failed.emitRemark("this core reserves ")
+          << dataPlaceholder->size
+          << " bytes for its own data sections (reserved_data_size), placed at "
+             "0x"
+          << llvm::utohexstr(dataPlaceholder->start) << "; '"
+          << failed.name().getValue() << "' "
+          << (wouldFit ? "would have fit without that reservation"
+                       : "would not have fit even without that reservation");
+    }
     // The memory map reads the addresses handed out, so print before rolling
     // them back.
     printMemMap(tile, allocatedBuffers, preAllocatedBuffers, ctx);
@@ -1007,6 +1101,14 @@ static BankAwareResult simpleBankAwareAllocation(TileOp tile) {
   if (!checkAndPrintOverlapStackframe(stacksize, allBuffers_on_tile) ||
       !checkAndPrintBufferOverlap(allBuffers_on_tile, tileAlignBitWidth))
     return BankAwareResult::OutOfMemory;
+  // The placeholder has done its job: it kept the free buffers out of the
+  // region while they were being placed. Lift it and stamp the run that
+  // actually survived, which has grown to absorb whatever the buffers did not
+  // use -- so the core still receives all the leftover memory, and the grant
+  // is >= the request rather than equal to it.
+  if (dataPlaceholder && dataPlaceholder->size)
+    occupancy.markFree(dataPlaceholder->start,
+                       dataPlaceholder->start + dataPlaceholder->size);
   stampCoreDataRegion(
       tile, coreDataRun(maxDataMemorySize, stacksize, allBuffers_on_tile));
   return BankAwareResult::Success;

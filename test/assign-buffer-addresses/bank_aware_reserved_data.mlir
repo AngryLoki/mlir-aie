@@ -7,9 +7,15 @@
 
 // A core's own compiled sections (.data/.rodata/.bss) share data memory with
 // the buffers placed here, and the generated linker script hands the core
-// compiler exactly one region: the largest gap left between the stack and the
-// buffers. Spreading buffers over banks chops that space up, so `reserved_data
-// _size` tells the allocator how much contiguous room the core still needs.
+// compiler exactly one region. Spreading buffers over banks chops that space
+// up, so `reserved_data_size` tells the allocator how much contiguous room the
+// core still needs.
+//
+// The allocator carves that room out *before* placing the unconstrained
+// buffers, choosing the spot that leaves the largest single run behind. So a
+// reservation no longer costs bank spreading: it takes a contiguous block and
+// the buffers spread over whatever is left, rather than everything packing
+// into one bank to leave a big gap at the far end.
 
 // RUN: aie-opt --split-input-file --aie-assign-buffer-addresses="alloc-scheme=bank-aware" %s | FileCheck %s
 
@@ -35,15 +41,19 @@ module @no_reservation_spreads {
 
 // -----
 
-// Asking for 40000 contiguous bytes cannot be met while spreading, so the same
-// three buffers pack from the bottom of bank 0 instead, leaving 52224 bytes in
-// one run. Bank spreading is a performance preference; leaving the core room
-// to link is a correctness constraint, so the constraint wins.
-// CHECK-LABEL: module @reservation_packs_tightly
-// CHECK: %a = aie.buffer(%tile_0_2) {address = 1024 : i32, mem_bank = 0 : i32, sym_name = "a"} : memref<4096xi8>
-// CHECK: %b = aie.buffer(%tile_0_2) {address = 5120 : i32, mem_bank = 0 : i32, sym_name = "b"} : memref<4096xi8>
-// CHECK: %c = aie.buffer(%tile_0_2) {address = 9216 : i32, mem_bank = 0 : i32, sym_name = "c"} : memref<4096xi8>
-module @reservation_packs_tightly {
+// A reservation big enough that it cannot coexist with a spread placement is
+// carved out of the bottom of memory, and the three buffers then spread over
+// the banks above it. The old allocator answered this by packing all three
+// into bank 0 and leaving the top 52224 bytes free; carving the block out
+// first gets the core its 40000 bytes *and* keeps two banks of spread.
+// CHECK-LABEL: module @reservation_carves_out_a_block
+// CHECK: %a = aie.buffer(%tile_0_2) {address = 41024 : i32, mem_bank = 2 : i32, sym_name = "a"} : memref<4096xi8>
+// CHECK: %b = aie.buffer(%tile_0_2) {address = 49152 : i32, mem_bank = 3 : i32, sym_name = "b"} : memref<4096xi8>
+// CHECK: %c = aie.buffer(%tile_0_2) {address = 53248 : i32, mem_bank = 3 : i32, sym_name = "c"} : memref<4096xi8>
+// The grant here is exactly the request: the buffers took everything above it,
+// so there was no unused space left to fold back in.
+// CHECK: data_length = 40000 : i32, data_origin = 1024 : i32
+module @reservation_carves_out_a_block {
   aie.device(npu2) {
     %tile_0_2 = aie.tile(0, 2)
     %a = aie.buffer(%tile_0_2) {sym_name = "a"} : memref<4096xi8>
@@ -57,11 +67,14 @@ module @reservation_packs_tightly {
 
 // -----
 
-// A reservation small enough to be met while still spreading leaves the
-// spread placement alone: the constraint only costs bank parallelism when it
-// actually has to.
+// A small reservation leaves the round-robin spread over banks 0-2 intact;
+// only `a` slides up within bank 0, to sit flush above the block reserved at
+// the bottom rather than stranding it.
 // CHECK-LABEL: module @small_reservation_keeps_spread
+// CHECK: %a = aie.buffer(%tile_0_2) {address = 9216 : i32, mem_bank = 0 : i32, sym_name = "a"} : memref<4096xi8>
 // CHECK: %b = aie.buffer(%tile_0_2) {address = 16384 : i32, mem_bank = 1 : i32, sym_name = "b"} : memref<4096xi8>
+// CHECK: %c = aie.buffer(%tile_0_2) {address = 32768 : i32, mem_bank = 2 : i32, sym_name = "c"} : memref<4096xi8>
+// CHECK: data_length = 28672 : i32, data_origin = 36864 : i32
 module @small_reservation_keeps_spread {
   aie.device(npu2) {
     %tile_0_2 = aie.tile(0, 2)

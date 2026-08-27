@@ -9,12 +9,18 @@
 // leaves a largest free run of 40960 bytes. A reservation larger than that --
 // 45000 bytes -- must fail rather than silently dropping the requirement or
 // the pin.
+//
+// The reservation is placed before any unconstrained buffer, so the failure is
+// reported against the reservation itself and names the only things that can
+// be in the way at that point. That is the actionable form: the old message
+// could only say how much contiguous space happened to survive placing
+// everything, leaving the user to work out what to change.
 
 // RUN: aie-opt --verify-diagnostics --aie-assign-buffer-addresses='alloc-scheme=bank-aware' %s
 
 module @too_large_around_the_pin {
   aie.device(npu2) {
-    // expected-warning @below {{buffers leave only 40960 contiguous bytes for the core's data sections, which need 45000 bytes}}
+    // expected-error @below {{cannot reserve 45000 contiguous bytes for this core's data sections (reserved_data_size); the largest free run is 40960 bytes}}
     // expected-error @below {{'aie.tile' op Bank-aware allocation failed.}}
     %tile_0_2 = aie.tile(0, 2)
     %mid = aie.buffer(%tile_0_2) {sym_name = "mid", mem_bank = 1 : i32} : memref<8192xi8>

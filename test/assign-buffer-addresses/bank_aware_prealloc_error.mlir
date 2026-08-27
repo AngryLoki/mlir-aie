@@ -91,14 +91,20 @@ module @test5 {
 
 // -----
 
-// A reservation larger than any run the tile can offer is reported against the
-// tile rather than silently producing a layout the core cannot link into.
+// A reservation the tile cannot satisfy alongside its buffers fails rather
+// than silently producing a layout the core cannot link into. 60000 bytes does
+// fit on its own -- it is reserved at 0x400 -- but it then leaves too little
+// for the three buffers, so the failure surfaces on the first buffer that has
+// nowhere to go, with a remark naming the reservation as the cause.
 module @test6 {
   aie.device(npu2) {
-    // expected-warning @below {{buffers leave only 52224 contiguous bytes for the core's data sections, which need 60000 bytes}}
+    // expected-warning @below {{Not all requested buffers fit in the available memory}}
+    // expected-note @below {{Current configuration of buffers in bank(s)}}
     // expected-error @below {{'aie.tile' op Bank-aware allocation failed.}}
     %tile_0_2 = aie.tile(0, 2)
     %a = aie.buffer(%tile_0_2) {sym_name = "a"} : memref<4096xi8>
+    // expected-warning @below {{Failed to allocate buffer: "b" with size: 4096 bytes}}
+    // expected-remark @below {{this core reserves 60000 bytes for its own data sections (reserved_data_size), placed at 0x400; 'b' would have fit without that reservation}}
     %b = aie.buffer(%tile_0_2) {sym_name = "b"} : memref<4096xi8>
     %c = aie.buffer(%tile_0_2) {sym_name = "c"} : memref<4096xi8>
     aie.core(%tile_0_2) {
