@@ -81,29 +81,63 @@ LogicalResult xilinx::AIE::AIETranslateToLdScript(ModuleOp module,
       TileID srcCoord = {tile.colIndex(), tile.rowIndex()};
       const auto &targetModel = getTargetModel(tile);
 
-      // Figure out how much memory we have left for compiler-generated
-      // sections (.data/.rodata/.bss) that are not explicitly placed; these are
-      // emitted into the "data" region below. Buffers are placed by the
-      // buffer-address allocator, which (in bank-aware mode) can leave the free
-      // space fragmented -- pick the largest free gap across the stack and this
-      // tile's buffers within the tile's local memory, via the same
-      // largestFreeRun the allocator's reserved_data_size acceptance test
-      // (AIEAssignBuffers) uses, so the two predict the identical number.
+      // The "data" region below is where the core compiler puts the sections
+      // it generates itself (.data/.rodata/.bss) and that nothing placed
+      // explicitly. It is one contiguous region, so its size -- not the total
+      // free memory -- is what decides whether the core links.
       auto core = tile.getCoreOp();
       int localMemSize = targetModel.getLocalMemorySize();
+      int64_t stackSize = core ? core.getEffectiveStackSize() : 0;
 
-      SmallVector<std::pair<int64_t, int64_t>> occupied;
-      occupied.emplace_back(0, core ? core.getEffectiveStackSize() : 0);
-      for (auto buf : buffers[tiles[srcCoord]]) {
-        int64_t bufferBaseAddr = getBufferBaseAddress(buf);
-        occupied.emplace_back(bufferBaseAddr,
-                              bufferBaseAddr + buf.getAllocationSize());
+      MemoryRun dataRun;
+      if (core && core.getDataOrigin() && core.getDataLength()) {
+        // The buffer allocator placed this region deliberately and recorded
+        // where; emit what it chose rather than re-deriving a number that has
+        // to agree with it.
+        dataRun = {*core.getDataOrigin(), *core.getDataLength()};
+
+        // A pass that added a buffer to this tile after the allocator ran
+        // would silently alias the core's own .data/.bss. Fail loudly instead
+        // of quietly falling back, which would hide the pipeline-ordering bug
+        // that produced it.
+        int64_t dataEnd = dataRun.start + dataRun.size;
+        if (dataRun.start < stackSize)
+          return tile.emitOpError("recorded data region at 0x")
+                 << llvm::utohexstr(dataRun.start)
+                 << " overlaps this core's stack (" << stackSize << " bytes)";
+        for (auto buf : buffers[tiles[srcCoord]]) {
+          int64_t bufStart = getBufferBaseAddress(buf);
+          int64_t bufEnd = bufStart + buf.getAllocationSize();
+          if (bufStart < dataEnd && dataRun.start < bufEnd)
+            return tile.emitOpError("recorded data region 0x")
+                   << llvm::utohexstr(dataRun.start) << "-0x"
+                   << llvm::utohexstr(dataEnd - 1) << " overlaps buffer '"
+                   << buf.name().getValue() << "' at 0x"
+                   << llvm::utohexstr(bufStart)
+                   << "; the buffer allocator's placement is stale. Re-run "
+                      "--aie-assign-buffer-addresses, or drop data_origin/"
+                      "data_length to recompute the region here";
+        }
+      } else {
+        // No recorded placement: this IR never went through the allocator
+        // (hand-written, or aie-translate run directly on it). Derive the
+        // region the same way the allocator would have, so such IR still
+        // links -- bank-aware placement can leave the free space fragmented,
+        // so this is the largest gap, not simply the space above the top
+        // buffer.
+        SmallVector<std::pair<int64_t, int64_t>> occupied;
+        occupied.emplace_back(0, stackSize);
+        for (auto buf : buffers[tiles[srcCoord]]) {
+          int64_t bufferBaseAddr = getBufferBaseAddress(buf);
+          occupied.emplace_back(bufferBaseAddr,
+                                bufferBaseAddr + buf.getAllocationSize());
+        }
+        dataRun = largestFreeRun(localMemSize, std::move(occupied));
       }
-      MemoryRun freeRun = largestFreeRun(localMemSize, std::move(occupied));
 
       int origin =
-          targetModel.getMemInternalBaseAddress(srcCoord) + freeRun.start;
-      int length = freeRun.size;
+          targetModel.getMemInternalBaseAddress(srcCoord) + dataRun.start;
+      int length = dataRun.size;
       output << R"THESCRIPT(
 MEMORY
 {

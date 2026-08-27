@@ -387,6 +387,23 @@ def AIE_CoreOp
       // "unknown, reserve nothing" whenever there is nothing to measure.
       OptionalAttr<ConfinedAttr<
           AIEI32Attr, [IntMinValue<0>]>>:$reserved_data_size,
+      // Where the buffer allocator actually put the core's data region and how
+      // big it came out, tile-relative (the same coordinate space as a buffer's
+      // `address`). `reserved_data_size` above is the *request*; this pair is
+      // the *grant*, and the grant is always >= the request. The grant is not
+      // simply the request: once every buffer is placed, whatever free space
+      // the buffers did not use is folded back in, so the core keeps receiving
+      // all the leftover memory. That matters because `reserved_data_size` is
+      // a lower bound -- auto-measurement cannot see `link_merge_files` or the
+      // core's own globals -- and the surplus is what absorbs the difference.
+      //
+      // AIETargetLdScript emits this verbatim as the `data` MEMORY region
+      // rather than recomputing it. Absent means the allocator never ran on
+      // this core (hand-written IR fed straight to
+      // `aie-translate --aie-generate-ldscript`), and the emitter falls back to
+      // computing the largest free run itself. Set together or not at all.
+      OptionalAttr<ConfinedAttr<AIEI32Attr, [IntMinValue<0>]>>:$data_origin,
+      OptionalAttr<ConfinedAttr<AIEI32Attr, [IntMinValue<0>]>>:$data_length,
       // Deprecated: attach link_with to func.func declarations instead and run
       // aie-assign-core-link-files to populate link_files.
       OptionalAttr<StrAttr>:$link_with,

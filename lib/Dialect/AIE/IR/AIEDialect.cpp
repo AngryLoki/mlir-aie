@@ -1863,6 +1863,32 @@ LogicalResult CoreOp::verify() {
                  << "' appears in both 'link_files' and 'link_merge_files'; an "
                     "artifact must be either merged or linked, not both";
     }
+  // The granted data region (see data_origin/data_length): either the
+  // allocator recorded a placement or it never ran, never one half of one.
+  if (getDataOrigin().has_value() != getDataLength().has_value())
+    return emitOpError("'data_origin' and 'data_length' must be set together; "
+                       "they are one region recorded by the buffer allocator");
+  if (auto origin = getDataOrigin()) {
+    int64_t length = *getDataLength();
+    int64_t stackSize = getEffectiveStackSize();
+    if (*origin < stackSize)
+      return emitOpError("data region at 0x")
+             << llvm::utohexstr(*origin) << " starts below the stack ("
+             << stackSize << " bytes)";
+    int64_t localMem = getTargetModel(*this).getLocalMemorySize();
+    if (*origin + length > localMem)
+      return emitOpError("data region 0x")
+             << llvm::utohexstr(*origin) << "-0x"
+             << llvm::utohexstr(*origin + length - 1)
+             << " runs past the end of this tile's memory (" << localMem
+             << " bytes total)";
+    // The grant exists to satisfy the request; a grant that does not is a
+    // bookkeeping bug in whatever wrote it, not a design the core can link.
+    if (auto reserved = getReservedDataSize(); reserved && length < *reserved)
+      return emitOpError("granted data region is ")
+             << length << " bytes, smaller than the requested "
+             << "reserved_data_size of " << *reserved << " bytes";
+  }
   // Checked last so it does not pre-empt the diagnostics above on an op with
   // more than one defect.
   if (uint32_t stackSize = getEffectiveStackSize(),
