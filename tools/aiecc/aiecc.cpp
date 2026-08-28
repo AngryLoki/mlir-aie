@@ -714,11 +714,11 @@ buildMainGraph(mlir::MLIRContext &context, Graph &g,
           [scheme = allocScheme.getValue(), dyn = dynamicObjFifos.getValue(),
            pkt = packetSwObjFifos.getValue(),
            ctrl = ctrlPktOverlay.getValue() || loadPdiToCtrlPkt.getValue(),
-           ldpdi = loadPdiToCtrlPkt.getValue(),
-           bf16 = bf16Emulation.getValue()](mlir::MLIRContext *ctx,
-                                            mlir::ModuleOp mod) {
+           ldpdi = loadPdiToCtrlPkt.getValue(), bf16 = bf16Emulation.getValue(),
+           skipVerify = skipObjectFifoVerify.getValue()](mlir::MLIRContext *ctx,
+                                                         mlir::ModuleOp mod) {
             return getInputWithAddressesPipeline(ctx, mod, scheme, dyn, pkt,
-                                                 ctrl, bf16, ldpdi);
+                                                 ctrl, bf16, ldpdi, skipVerify);
           }});
 
   // Scratchpad run-time parameters sidecar file
@@ -1873,6 +1873,7 @@ int main(int argc, char **argv) {
   mlir::registerAllPasses();
   xilinx::registerConversionPasses();
   xilinx::AIE::registerAIEPasses();
+  xilinx::AIE::registerAIEObjectFifoPipeline();
   xilinx::AIEX::registerAIEXPasses();
   xilinx::aievec::registerAIEVecPasses();
   xilinx::aievec::registerAIEVecPipelines();
