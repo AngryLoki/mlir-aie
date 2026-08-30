@@ -5,17 +5,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-// When buffer address assignment fails outright (oversized buffers here, same
-// technique as reserved_data_size_undersized.mlir), the existing MemoryMap
-// diagnostic must also show the call-graph analysis's computed stack
-// requirement alongside the stack region -- so a user sees stack, buffers,
-// and the analysis's own number together in one diagnostic instead of having
-// to cross-reference this failure with the separate warning emitted earlier
-// in the build (from checkStackSizeRequirements).
+// When buffer address assignment fails outright (oversized buffers, same
+// technique as reserved_data_size_undersized.mlir), the MemoryMap diagnostic
+// must also show the call-graph analysis's computed stack requirement
+// alongside the stack region (see getComputedStackRequirement).
 
 // REQUIRES: peano
 // RUN: rm -rf %t.d && mkdir -p %t.d
-// RUN: clang++ --target=aie2p-none-unknown-elf -std=c++20 -O0 -DNDEBUG -fstack-size-section -c %S/stack_size_measured_kernel.cc -o %t.d/stack_size_measured_kernel.o
+// RUN: clang++ --target=aie2p-none-unknown-elf -std=c++20 -O0 -DNDEBUG -ffunction-sections -fdata-sections -fstack-size-section -c %S/stack_size_measured_kernel.cc -o %t.d/stack_size_measured_kernel.o
 // RUN: cd %t.d && not %aiecc %s 2>&1 | FileCheck %s
 
 // CHECK: warning: this core's callees need at least {{[0-9]+}} bytes of stack
@@ -37,8 +34,7 @@ module {
     func.func private @entry_fn(memref<512xi8>) attributes {link_with = "stack_size_measured_kernel.o"}
 
     %core_0_2 = aie.core(%tile_0_2) {
-      %sv = aie.objectfifo.acquire @of_out(Produce, 1) : !aie.objectfifosubview<memref<512xi8>>
-      %e = aie.objectfifo.subview.access %sv[0] : !aie.objectfifosubview<memref<512xi8>> -> memref<512xi8>
+      %e = aie.objectfifo.acquire @of_out(Produce, 1) : memref<512xi8>
       func.call @entry_fn(%e) : (memref<512xi8>) -> ()
       aie.objectfifo.release @of_out(Produce, 1)
       aie.end

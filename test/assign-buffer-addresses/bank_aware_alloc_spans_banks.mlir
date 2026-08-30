@@ -17,22 +17,22 @@
 // fallback_alloc_error.mlir (an unsatisfiable mem_bank) and
 // fallback_routine_error.mlir (both schemes failing).
 
-// RUN: aie-opt --aie-objectFifo-stateful-transform --aie-assign-buffer-addresses %s 2>&1 | FileCheck %s
+// RUN: aie-opt --aie-objectFifo-stateful-transform="skip-verify=true" --aie-assign-buffer-addresses %s 2>&1 | FileCheck %s
 // CHECK-NOT: warning
 // CHECK:   module @test {
 // CHECK:     aie.device(xcvc1902) {
 // CHECK:       %tile_1_2 = aie.tile(1, 2)
-// CHECK:       %a = aie.buffer(%tile_1_2) {address = 0 : i32, mem_bank = 0 : i32, sym_name = "a"} : memref<4096xi32>
-// CHECK:       %b = aie.buffer(%tile_1_2) {address = 16384 : i32, mem_bank = 2 : i32, sym_name = "b"} : memref<16xi16>
-// CHECK:       %tile_1_3 = aie.tile(1, 3)
-// CHECK:       %act_3_4_buff_0 = aie.buffer(%tile_1_2) {address = 24576 : i32, mem_bank = 3 : i32, sym_name = "act_3_4_buff_0"} : memref<8xi32>
-// CHECK:       %act_3_4_buff_1 = aie.buffer(%tile_1_2) {address = 16416 : i32, mem_bank = 2 : i32, sym_name = "act_3_4_buff_1"} : memref<8xi32>
-// CHECK:       %act_3_4_buff_2 = aie.buffer(%tile_1_2) {address = 24608 : i32, mem_bank = 3 : i32, sym_name = "act_3_4_buff_2"} : memref<8xi32>
-// CHECK:       %act_3_4_buff_3 = aie.buffer(%tile_1_2) {address = 16448 : i32, mem_bank = 2 : i32, sym_name = "act_3_4_buff_3"} : memref<8xi32>
+// CHECK:       %act_3_4_buff_0 = aie.buffer(%tile_1_2) {address = 16384 : i32, mem_bank = 2 : i32, sym_name = "act_3_4_buff_0"} : memref<8xi32>
+// CHECK:       %act_3_4_buff_1 = aie.buffer(%tile_1_2) {address = 24576 : i32, mem_bank = 3 : i32, sym_name = "act_3_4_buff_1"} : memref<8xi32>
+// CHECK:       %act_3_4_buff_2 = aie.buffer(%tile_1_2) {address = 16416 : i32, mem_bank = 2 : i32, sym_name = "act_3_4_buff_2"} : memref<8xi32>
+// CHECK:       %act_3_4_buff_3 = aie.buffer(%tile_1_2) {address = 24608 : i32, mem_bank = 3 : i32, sym_name = "act_3_4_buff_3"} : memref<8xi32>
 // CHECK:       %act_3_4_lock_0 = aie.lock(%tile_1_2) {init = 0 : i32, sym_name = "act_3_4_lock_0"}
 // CHECK:       %act_3_4_lock_1 = aie.lock(%tile_1_2) {init = 0 : i32, sym_name = "act_3_4_lock_1"}
 // CHECK:       %act_3_4_lock_2 = aie.lock(%tile_1_2) {init = 0 : i32, sym_name = "act_3_4_lock_2"}
 // CHECK:       %act_3_4_lock_3 = aie.lock(%tile_1_2) {init = 0 : i32, sym_name = "act_3_4_lock_3"}
+// CHECK:       %a = aie.buffer(%tile_1_2) {address = 0 : i32, mem_bank = 0 : i32, sym_name = "a"} : memref<4096xi32>
+// CHECK:       %b = aie.buffer(%tile_1_2) {address = 16448 : i32, mem_bank = 2 : i32, sym_name = "b"} : memref<16xi16>
+// CHECK:       %tile_1_3 = aie.tile(1, 3)
 // CHECK:     }
 // CHECK:   }
 

@@ -143,14 +143,18 @@ LogicalResult xilinx::AIE::AIETranslateToLdScript(ModuleOp module,
         dataRun = largestFreeRun(localMemSize, std::move(occupied));
       }
 
+      // Was hardcoded to 0x20000 -- eight times the real 0x4000 -- which let
+      // an overflowing core link cleanly and fail much later in aie-rt's ELF
+      // loader instead of here, at the linker, naming the section.
       int origin =
           targetModel.getMemInternalBaseAddress(srcCoord) + dataRun.start;
       int length = dataRun.size;
       output << R"THESCRIPT(
 MEMORY
 {
-   program (RX) : ORIGIN = 0, LENGTH = 0x0020000
 )THESCRIPT";
+      output << "   program (RX) : ORIGIN = 0, LENGTH = 0x"
+             << llvm::utohexstr(targetModel.getProgramMemorySize()) << "\n";
       output << "   data (!RX) : ORIGIN = 0x" << llvm::utohexstr(origin)
              << ", LENGTH = 0x" << llvm::utohexstr(length);
       output << R"THESCRIPT(

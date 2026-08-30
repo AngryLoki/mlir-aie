@@ -5,26 +5,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-// The exact same recursive kernel that fails aiecc outright in
+// The same recursive kernel that fails outright in
 // stack_size_recursion_error.mlir must build cleanly once its root symbol
-// carries stack_size_override: the override cuts the whole subtree beneath
-// it, so the analysis never even looks at (and never trips over) the
-// self-recursive `recurse` living inside the same object. This is also how
-// an internal symbol the user never declared in MLIR becomes coverable at
-// all -- they only ever need to name the kernel entry point they already
-// wrote, not whatever recurses inside it.
+// carries stack_size_override: the override cuts the subtree beneath it, so
+// the analysis never trips over the self-recursive `recurse` inside.
 //
-// The core also declares its own explicit stack_size, comfortably above the
-// kernel's 4096-byte override plus its own frame: an explicit stack_size is
-// never touched, exactly as reserved_data_size's explicit values are -- but
-// unlike reserved_data_size, it is not exempt from the later, more complete
-// sufficiency check (see stack_size_absent_insufficient_error.mlir and
-// stack_size_explicit_insufficient_error.mlir): here it simply is enough, so
-// that check has nothing to say either.
+// The core's own stack_size (8192) comfortably covers the 4096-byte override
+// plus its own frame, so the later, more complete sufficiency check (see
+// stack_size_absent_insufficient_error.mlir) has nothing to say either.
 
 // REQUIRES: peano
 // RUN: rm -rf %t.d && mkdir -p %t.d
-// RUN: clang++ --target=aie2p-none-unknown-elf -std=c++20 -O0 -DNDEBUG -fstack-size-section -c %S/stack_size_recursive_kernel.cc -o %t.d/stack_size_recursive_kernel.o
+// RUN: clang++ --target=aie2p-none-unknown-elf -std=c++20 -O0 -DNDEBUG -ffunction-sections -fdata-sections -fstack-size-section -c %S/stack_size_recursive_kernel.cc -o %t.d/stack_size_recursive_kernel.o
 // RUN: cd %t.d && %aiecc %s 2>&1 | FileCheck --allow-empty %s
 
 // CHECK-NOT: cannot determine this core's stack requirement
@@ -40,8 +32,7 @@ module {
     func.func private @recursive_touch(memref<512xi8>) attributes {link_with = "stack_size_recursive_kernel.o", stack_size_override = 4096 : i32}
 
     %core_0_2 = aie.core(%tile_0_2) {
-      %sv = aie.objectfifo.acquire @of_out(Produce, 1) : !aie.objectfifosubview<memref<512xi8>>
-      %e = aie.objectfifo.subview.access %sv[0] : !aie.objectfifosubview<memref<512xi8>> -> memref<512xi8>
+      %e = aie.objectfifo.acquire @of_out(Produce, 1) : memref<512xi8>
       func.call @recursive_touch(%e) : (memref<512xi8>) -> ()
       aie.objectfifo.release @of_out(Produce, 1)
       aie.end

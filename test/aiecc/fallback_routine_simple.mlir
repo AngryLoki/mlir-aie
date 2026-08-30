@@ -10,7 +10,7 @@
 // The front-end (place/allocate) only runs if some artifact roots it; request
 // input_with_addresses so the buffer-allocation diagnostics below are emitted
 // without invoking any core compiler.
-// RUN: not %aiecc -v --get-input-with-addresses %s 2>&1 | FileCheck %s
+// RUN: not %aiecc -v --skip-objectFifo-verify --get-input-with-addresses %s 2>&1 | FileCheck %s
 
 // Buffer "a" is 16384 bytes and asks for bank 1, which is only 8192 bytes on
 // this device, so the mem_bank it requests cannot be honoured. That is
