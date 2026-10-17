@@ -1850,6 +1850,8 @@
       
         
       
+        
+      
     
     
     
@@ -1991,6 +1993,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="section-4/section-4d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4d: Kernel Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2076,6 +2106,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2139,6 +2173,62 @@
     
   
     IRON Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="core_data_memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Data Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing
   
 
     
@@ -3725,6 +3815,10 @@
 <td><a href="compilation_stages/">Compilation stages</a></td>
 </tr>
 <tr>
+<td>A routing error, or how flows become switch settings</td>
+<td><a href="routing/">Routing</a></td>
+</tr>
+<tr>
 <td>Ready-made compute kernels (matmul, conv, eltwise, vision)</td>
 <td><a href="kernels_library/">Kernel library</a></td>
 </tr>
@@ -3745,7 +3839,7 @@
 <li><a href="./section-6/">Section 6 — Larger example designs</a> (vision, ML)</li>
 </ul>
 <h2 id="jit-compile--cache">JIT compile + cache<a class="headerlink" href="#jit-compile--cache" title="Permanent link">&para;</a></h2>
-<p><code>@iron.jit</code> caches compiled artifacts by <code>(MLIR bytecode + compile-time kwargs)</code>. The first call to a design compiles; subsequent calls with the same kwargs reuse the cache.</p>
+<p><code>@iron.jit</code> caches compiled artifacts by the design's Python sources (the generator, the modules it reaches, and mlir-aie's own) and its compile-time kwargs. The first call to a design compiles; subsequent calls with the same kwargs reuse the cache.</p>
 <ul>
 <li>Cache directory: <code>${NPU_CACHE_HOME:-~/.npu/cache}</code>. Set <code>NPU_CACHE_HOME=/tmp/iron_cache</code> (or anywhere) to override.</li>
 <li>To force a clean build, <code>rm -rf "$NPU_CACHE_HOME"</code> (or the per-design <code>build/</code> directory the Makefile writes to).</li>
@@ -3855,7 +3949,7 @@
 </tr>
 <tr>
 <td><a href="../api/iron/#iron.runtime.runtime.Runtime"><strong>Runtime</strong></a></td>
-<td>The host-side description of <code>fill</code> / <code>drain</code> operations, defined by the body passed to <code>Runtime(seq, inputs, fn_args)</code>. Workers are passed to <code>Program(workers=...)</code> rather than started from the body. Distinct from "host code" (the C++/Python testbench that calls the design).</td>
+<td>The host-side description of <code>fill</code> / <code>drain</code> operations, defined by the body passed to <code>Runtime(seq, fn_args)</code>. Workers are passed to <code>Program(workers=...)</code>. Distinct from "host code" (the C++/Python testbench that calls the design).</td>
 </tr>
 <tr>
 <td><a href="../api/iron/#iron.program.Program"><strong>Program</strong></a></td>
@@ -3863,7 +3957,7 @@
 </tr>
 <tr>
 <td><a href="../api/iron/#iron.buffer.Buffer"><strong>Buffer</strong></a></td>
-<td>A named memory region on a tile, accessible by both Workers and the Runtime (often used for runtime parameters).</td>
+<td>A named memory region on a tile, used for Worker-local scratch storage or runtime parameters. Prefer it over a self-connected ObjectFifo when sequential kernel calls in one Worker share an intermediate result; use ObjectFifos when producer/consumer synchronization is needed.</td>
 </tr>
 <tr>
 <td><a href="../api/iron/#iron.kernel.Kernel"><strong>Kernel</strong></a> / <a href="../api/iron/#iron.kernel.ExternalFunction"><strong>ExternalFunction</strong></a></td>
@@ -3883,7 +3977,7 @@
 </tr>
 <tr>
 <td><a href="../api/iron/#iron.runtime.runtime.Runtime"><strong>Runtime sequence</strong></a></td>
-<td>The sequence body passed to <code>Runtime(seq, inputs, fn_args)</code> in which <code>fill</code> / <code>drain</code> operations are declared.</td>
+<td>The sequence body passed to <code>Runtime(seq, fn_args)</code> in which <code>fill</code> / <code>drain</code> operations are declared.</td>
 </tr>
 </tbody>
 </table>

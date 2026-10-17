@@ -1836,6 +1836,8 @@
       
         
       
+        
+      
     
     
     
@@ -1974,6 +1976,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../programming_guide/section-4/section-4d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4d: Kernel Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2059,6 +2089,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2119,6 +2153,62 @@
     
   
     IRON Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../programming_guide/core_data_memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Data Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../programming_guide/routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing
   
 
     
@@ -3697,7 +3787,7 @@ compiler pass (<code>--aie-place-tiles</code>) that runs over the <code>aie.logi
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">producer</span> <span class="o">=</span> <span class="n">of</span><span class="o">.</span><span class="n">prod</span><span class="p">()</span>              <span class="c1"># endpoint used on the producer side (or in the sequence&#39;s .fill())</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">consumer</span> <span class="o">=</span> <span class="n">of</span><span class="o">.</span><span class="n">cons</span><span class="p">()</span>              <span class="c1"># NEW consumer handle each call — for broadcast to N</span>
 </code></pre></div>
-<p><code>prod()</code>/<code>cons()</code> also take an optional <code>tile=</code> to pin the shim tile a runtime-driven endpoint binds to (<code>prod(tile=...)</code>, <code>cons(tile=..., dims_from_stream=...)</code>); leave it <code>None</code> (the default) unless you have a specific placement reason — IRON picks any available shim tile automatically.</p>
+<p><code>prod()</code>/<code>cons()</code> also take an optional <code>tile=</code> to pin the shim tile a runtime-driven endpoint binds to (<code>prod(tile=...)</code>, <code>cons(tile=..., from_stream=...)</code>); leave it <code>None</code> (the default) unless you have a specific placement reason — IRON picks any available shim tile automatically.</p>
 <p>Inside a <code>Worker</code> body:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">elem</span> <span class="o">=</span> <span class="n">of</span><span class="o">.</span><span class="n">acquire</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>              <span class="c1"># blocks until n objects available; returns scalar if n==1, list-like if n&gt;1</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="o">...</span> <span class="n">use</span> <span class="n">elem</span> <span class="o">...</span>
@@ -3718,9 +3808,9 @@ compiler pass (<code>--aie-place-tiles</code>) that runs over the <code>aie.logi
 <a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="c1"># Forward: implicit copy through a mem tile</span>
 <a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="n">of_via_mem</span> <span class="o">=</span> <span class="n">of</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">obj_type</span><span class="o">=</span><span class="n">tile_ty</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;forwarded&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>split()</code>/<code>join()</code>/<code>forward()</code> also accept <code>tile=</code> (which mem tile hosts the split/join/forward DMA; defaults to <code>AnyMemTile</code>), <code>depths=</code>/<code>depth=</code> (per-sub-fifo depth override, defaults to the parent's <code>depth</code>), <code>dims_to_stream=</code>/<code>dims_from_stream=</code> (per-sub-fifo stream-dimension reshaping), <code>plio=</code> (mark sub-fifos as PLIO), and <code>repeat_counts=</code>/<code>repeat_count=</code> (per-sub-fifo MemTile DMA repeat count). Defaults cover the common case above; reach for these only for custom placement or streaming layouts.</p>
-<p>The plain <code>ObjectFifo(...)</code> constructor itself also accepts <code>dims_to_stream=</code>/<code>dims_from_stream_per_cons=</code> — distinct from the per-sub-fifo kwargs above, this reshapes the <em>whole</em> fifo's stream dimensions before any split/join:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">of_out</span> <span class="o">=</span> <span class="n">ObjectFifo</span><span class="p">(</span><span class="n">data_ty</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;out&quot;</span><span class="p">,</span> <span class="n">dims_to_stream</span><span class="o">=</span><span class="n">dims</span><span class="p">)</span>
+<p><code>split()</code>/<code>join()</code>/<code>forward()</code> also accept <code>tile=</code> (which mem tile hosts the split/join/forward DMA; defaults to <code>AnyMemTile</code>), <code>depths=</code>/<code>depth=</code> (per-sub-fifo depth override, defaults to the parent's <code>depth</code>), <code>to_stream=</code>/<code>from_stream=</code> (per-sub-fifo stream-dimension reshaping), <code>plio=</code> (mark sub-fifos as PLIO), and <code>repeat_counts=</code>/<code>repeat_count=</code> (per-sub-fifo MemTile DMA repeat count). Defaults cover the common case above; reach for these only for custom placement or streaming layouts.</p>
+<p>The plain <code>ObjectFifo(...)</code> constructor itself also accepts <code>to_stream=</code>/<code>from_stream_per_cons=</code> — distinct from the per-sub-fifo kwargs above, this reshapes the <em>whole</em> fifo's stream dimensions before any split/join:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">of_out</span> <span class="o">=</span> <span class="n">ObjectFifo</span><span class="p">(</span><span class="n">data_ty</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;out&quot;</span><span class="p">,</span> <span class="n">to_stream</span><span class="o">=</span><span class="n">dims</span><span class="p">)</span>
 </code></pre></div>
 <p><code>depth</code>: 2 gives ping-pong (double-buffering — the producer fills one slot while the consumer drains the other). For a pipeline where a stage holds a buffer while the next stage also holds one, set <code>depth ≥ producer_outstanding + consumer_outstanding</code>, where each term is the number of buffers that side holds acquired-but-not-released at once.</p>
 <h3 id="advanced-objectfifo-opt-in">Advanced ObjectFifo (opt-in)<a class="headerlink" href="#advanced-objectfifo-opt-in" title="Permanent link">&para;</a></h3>
@@ -3757,7 +3847,7 @@ compiler pass (<code>--aie-place-tiles</code>) that runs over the <code>aie.logi
 <p>The placement kwarg is <strong><code>tile=</code></strong> (not <code>placement=</code>), and it defaults to <code>AnyComputeTile</code>,
 which leaves the choice to the <code>--aie-place-tiles</code> pass. Passing a non-compute tile raises
 <code>ValueError</code> at construction.</p>
-<p><code>while_true</code> (default <code>True</code>) wraps <code>core_body</code> in a <code>while(true)</code> loop so the core keeps servicing the fifo until reconfiguration; pass <code>False</code> for a core that should run exactly once (rare — most designs want the default forever-loop).</p>
+<p><code>while_true</code> (default <code>True</code>) wraps <code>core_body</code> in a <code>while(true)</code> loop so the core keeps servicing the fifo until reconfiguration; pass <code>False</code> for a core that should run exactly once (rare — most designs want the default forever-loop). To run setup once and then loop, pass <code>False</code> and write <code>for _ in forever_():</code> (<code>aie.iron.controlflow</code>) in the body; don't fake it with <code>range_(sys.maxsize)</code>.</p>
 <p><code>stack_size</code> defaults to the target model's <code>getDefaultCoreStackSize()</code> (currently 1024 bytes) — bump it if a core overflows its stack. <code>dynamic_objfifo_lowering</code> is a per-core override of the ObjectFifo lowering strategy and is only honored when the global <code>--dynamic-objFifos</code> flag is false; leave it <code>None</code> unless you're specifically working around a lowering issue.</p>
 <h3 id="cascadeflow--direct-cascade-stream-link-between-two-workers">CascadeFlow — direct cascade-stream link between two Workers<a class="headerlink" href="#cascadeflow--direct-cascade-stream-link-between-two-workers" title="Permanent link">&para;</a></h3>
 <p>For designs that chain compute across adjacent tiles' cascade interconnect (e.g. an accumulator passed core-to-core) rather than through an ObjectFifo, connect two <code>Worker</code>s directly:</p>
@@ -3838,12 +3928,12 @@ which leaves the choice to the <code>--aie-place-tiles</code> pass. Passing a no
 <p><code>tap</code> and the raw <code>sizes=</code>/<code>strides=</code>/<code>offset=</code>/<code>transfer_len=</code> kwargs are mutually exclusive — pass one style or the other, not both. Omit both and <code>fill</code>/<code>drain</code> default to a full linear transfer of the whole buffer.</p>
 <h3 id="unmanaged-transfers--hand-rolled-software-pipelining">Unmanaged transfers — hand-rolled software pipelining<a class="headerlink" href="#unmanaged-transfers--hand-rolled-software-pipelining" title="Permanent link">&para;</a></h3>
 <p>By default (<code>managed=True</code>) a transfer is enrolled in a <code>TaskGroup</code> that frees it automatically. Pass <code>managed=False</code> to own the returned <code>Task</code> yourself — e.g. to carry it across <code>scf.for</code> iterations as an iter_arg in a manually pipelined loop:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">task</span> <span class="o">=</span> <span class="n">in_h</span><span class="o">.</span><span class="n">fill</span><span class="p">(</span><span class="n">a_in</span><span class="p">,</span> <span class="n">managed</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">task</span> <span class="o">=</span> <span class="n">in_h</span><span class="o">.</span><span class="n">fill</span><span class="p">(</span><span class="n">a_in</span><span class="p">,</span> <span class="n">managed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="o">...</span>
 <a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">task</span><span class="o">.</span><span class="n">await_</span><span class="p">()</span>
 <a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">task</span><span class="o">.</span><span class="n">free</span><span class="p">()</span>
 </code></pre></div>
-<p><code>managed=False</code> and <code>group=</code> are mutually exclusive (an unmanaged transfer isn't part of a <code>TaskGroup</code>).</p>
+<p><code>managed=False</code> and <code>group=</code> are mutually exclusive (an unmanaged transfer isn't part of a <code>TaskGroup</code>). Only a <code>wait=True</code> transfer can be awaited. When every loop in the sequence has a compile-time trip count, <code>.free()</code> is optional: the compiler takes BDs back from tasks it can prove finished. Issue a task after the transfers it depends on (a block's fills before its drain), since the compiler may wait on it before issuing anything later.</p>
 <h3 id="runtime-parameters-rtp-and-the-worker-barrier">Runtime parameters (RTP) and the worker barrier<a class="headerlink" href="#runtime-parameters-rtp-and-the-worker-barrier" title="Permanent link">&para;</a></h3>
 <p>RTP writes are now plain indexing on the <code>Buffer</code> inside the sequence body — there's no <code>rt.inline_ops</code>. <code>WorkerRuntimeBarrier.set(value)</code> replaces <code>rt.set_barrier</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">sequence</span><span class="p">(</span><span class="n">a_in</span><span class="p">,</span> <span class="n">c_out</span><span class="p">,</span> <span class="n">in_h</span><span class="p">,</span> <span class="n">out_h</span><span class="p">):</span>

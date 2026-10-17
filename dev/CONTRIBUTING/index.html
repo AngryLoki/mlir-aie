@@ -1842,6 +1842,8 @@
       
         
       
+        
+      
     
     
     
@@ -1980,6 +1982,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../programming_guide/section-4/section-4d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4d: Kernel Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2065,6 +2095,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2125,6 +2159,62 @@
     
   
     IRON Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../programming_guide/core_data_memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Data Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../programming_guide/routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing
   
 
     
@@ -3820,8 +3910,10 @@ formatting or lint issue. To run them by hand:</p>
 </code></pre></div>
 <p>The hooks cover:</p>
 <ul>
-<li><strong>C++</strong> — <a href="https://clang.llvm.org/docs/ClangFormat.html"><code>clang-format</code></a>
-  (LLVM style; config in <code>.clang-format</code>).</li>
+<li><strong>C++ and TableGen (<code>*.td</code>)</strong> — <a href="https://clang.llvm.org/docs/ClangFormat.html"><code>clang-format</code></a>
+  (LLVM style; config in <code>.clang-format</code>). The hook pins clang-format 23.1.1,
+  which is what CI runs; a system <code>clang-format</code> of another version can
+  format the same file differently.</li>
 <li><strong>Python and notebooks</strong> — <a href="https://black.readthedocs.io/"><code>black</code></a> for
   formatting, plus <code>nbstripout</code> to scrub notebook output before it is
   committed.</li>
@@ -3830,6 +3922,16 @@ formatting or lint issue. To run them by hand:</p>
 <li><strong>C++ static analysis</strong> — <a href="https://clang.llvm.org/extra/clang-tidy/"><code>clang-tidy</code></a>,
   scoped to a growing list of files (see
   <a href="#static-analysis-for-c-clang-tidy">Static analysis for C++</a> below).</li>
+<li><strong>Comment slop</strong> — <code>utils/check_comment_slop.py</code>, on every commit, reads
+  the diff and flags a concept explained again at three or more sites,
+  comment blocks over 12 lines, and high comment density. CI runs it over
+  everything since the merge base with the PR's target branch, so a
+  history of individually clean commits can still fail there.</li>
+<li><strong>Submodule pointers</strong> — <code>utils/check_submodule_regression.py</code>, on every
+  commit and push, rejects a submodule pointer change unless the new commit
+  descends from the old one, so a stale checkout swept in by <code>git commit -a</code>
+  can't roll a submodule back. Bumps pass; for an intentional downgrade, use
+  <code>SKIP=check-submodule-regression</code>.</li>
 <li><strong>Baseline hygiene</strong> — trailing whitespace, end-of-file, merge-conflict
   markers, and <a href="https://reuse.software/">REUSE</a> license-header compliance.</li>
 </ul>
@@ -3841,8 +3943,10 @@ supported path.</p>
 <a href="https://docs.astral.sh/ruff/">ruff</a>, scoped to <code>python/{iron,utils,helpers,
 compiler}</code> and a growing set of <code>programming_examples/</code> directories —
 <code>ruff.toml</code>'s <code>include</code> list at the repo root is the source of truth for
-exactly which paths are covered. The pre-push hook runs <code>ruff check</code> and
-blocks the push on any violation; run it by hand with:</p>
+exactly which paths are covered. The pre-push hook runs <code>ruff check</code> on the
+files you push and blocks the push on any violation. CI runs it on every
+covered file, so a violation in a file you didn't touch (after a merge, for
+instance) fails CI but not the hook; run it by hand with:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ruff<span class="w"> </span>check
 </code></pre></div>
 <p>Rules enabled: pyflakes/pycodestyle errors (<code>E</code>, <code>F</code>), import sorting (<code>I</code>), a
@@ -3920,7 +4024,13 @@ disable rules.</p>
   <em>style</em> of a docstring once you've written one (blank-line placement,
   imperative first line, terminal punctuation) — see
   <a href="#linting-python">Linting Python</a>. Writing a docstring in the first place is
-  still expected for anything public-facing, just not yet machine-enforced.</li>
+  still expected for anything public-facing, just not yet machine-enforced.
+  Docstrings render as Markdown, not reStructuredText: write <code>``Name``</code>
+  (or an mkdocstrings cross-reference) instead of <code>:class:</code>/<code>:meth:</code>/<code>:func:</code>
+  roles, fenced <code>```python</code> blocks at the docstring's text indent
+  instead of <code>Example::</code> literal blocks, and a Google <code>Note:</code> section instead
+  of <code>.. note::</code>. <code>mkdocs build --strict</code> does not catch these, so check
+  them by eye.</li>
 <li><strong>C++</strong> — use Doxygen-style triple-slash comments (<code>///</code>, with <code>\brief</code>,
   <code>\param</code>, <code>\returns</code> as needed) on public declarations in headers. These feed
   the <a href="../api/cpp_doxygen/">C++ API reference</a>.</li>

@@ -1941,6 +1941,8 @@
       
         
       
+        
+      
     
     
     
@@ -2082,6 +2084,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../section-4/section-4d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4d: Kernel Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2167,6 +2197,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2230,6 +2264,62 @@
     
   
     IRON Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_data_memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Data Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing
   
 
     
@@ -3661,7 +3751,8 @@
 <blockquote>
 <p><strong>NOTE 1:</strong> Did you notice the underscore in <code>range_</code>? Although IRON makes NPU designs look mostly like normal Python programs, the code you write here is <em>not</em> directly executed on the NPU; instead, it <em>generates other code</em> (metaprogramming) — kind of like writing a print statement with a string of code inside. Our toolchain then compiles that generated code so it can run on the NPU.</p>
 <p>If you wrote <code>range</code> instead of <code>range_</code>, the generated NPU code would contain many <code>buff[i] = 0</code> instructions back-to-back, with no loop at all (the loop is "unrolled"). On the other hand, when you use <code>range_</code>, Python executes the loop body once to collect the instructions, then emits a real loop into the NPU code. The same applies to other branching constructs like <code>if</code>; using Python's native <code>if</code> will emit no actual branches into the NPU code.</p>
-<p><strong>NOTE 2:</strong> The Worker above is instantiated with <code>while_true=False</code>. By default this is <code>True</code>, which wraps the kernel body in a <code>while True</code>-style loop simulated by a <code>for _ in range(sys.maxsize):</code>. Depending on the body (e.g., creating a local buffer with a unique name) the infinite-loop wrapper can cause compiler issues.</p>
+<p><strong>NOTE 2:</strong> The Worker above is instantiated with <code>while_true=False</code>. By default this is <code>True</code>, which wraps the kernel body in a <code>while True</code> loop (an <code>scf.while</code> whose condition is always true). Depending on the body (e.g., creating a local buffer with a unique name) the infinite-loop wrapper can cause compiler issues. A body that must do some work once and then loop, or that loops forever itself, should pass <code>while_true=False</code> and write the loop with <code>for _ in forever_():</code> (from <code>aie.iron.controlflow</code>) rather than a <code>range_</code> with a huge bound.</p>
+<p><strong>NOTE 3:</strong> A <code>Buffer</code> such as <code>buf</code> above shares the tile's local data memory with the Worker's call stack and compiled static data, including bank-pinned LUT tables; instructions occupy separate program memory. See <a href="../core_data_memory/">Core Data Memory</a> for placement controls, compiler checks, and what to do when a stack or memory build error fires.</p>
 </blockquote>
 <p>Data movement between Workers will get its own <a href="../section-2/section-2d/">section</a>; host-to/from-NPU data movement is configured inside the <code>Runtime</code> sequence body. In this minimal example the sequence body has one host-facing tensor argument and does no data movement; the Worker is passed to the <code>Program</code>:</p>
 <p><div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">sequence</span><span class="p">(</span><span class="n">b</span><span class="p">):</span>
@@ -3681,7 +3772,7 @@ Finally we wrap everything in a <code>Program</code>, passing the Worker via <co
 <p>By default the <code>--aie-place-tiles</code> pass uses a sequential placer that assigns tiles in column-major order. For larger designs with memory or routing constraints, the simulated annealing (SA) placer can potentially find better placements by passing <code>--placer=sa_placer --sa-seed=&lt;N&gt;</code> through to <code>aiecc</code> (via the design's <code>aiecc_flags</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>aiecc<span class="w"> </span>--placer<span class="o">=</span>sa_placer<span class="w"> </span>--sa-seed<span class="o">=</span><span class="m">3</span><span class="w"> </span>...
 </code></pre></div>
-<p>The SA placer optimizes wire length while respecting memory capacity, DMA channel limits, and cascade adjacency constraints. Not all seeds produce legal placements for every design — if compilation fails with a buffer overflow or routing error, try different seed values (e.g. sweep seeds 1–10) to find one that works. See <a href="https://github.com/Xilinx/mlir-aie/tree/main/programming_examples/vision/color_detect">color_detect</a> for an example that wires this up as <code>make use_sa_placer=1</code>.</p>
+<p>The SA placer optimizes wire length while respecting memory capacity, DMA channel limits, and cascade adjacency constraints. Not all seeds produce legal placements for every design — if compilation fails with a buffer overflow or routing error, try different seed values (e.g. sweep seeds 1–10) to find one that works. See <a href="https://github.com/Xilinx/mlir-aie/tree/main/programming_examples/vision/color_detect">color_detect</a> for an example that wires this up as <code>make use_sa_placer=1</code>. The SA placer's nightly checks are on the <a href="https://xilinx.github.io/mlir-aie/dashboard/#view=placement">maintainer dashboard</a>.</p>
 <h2 id="other-tile-types">Other Tile Types<a class="headerlink" href="#other-tile-types" title="Permanent link">&para;</a></h2>
 <p>Besides compute tiles, an AIE-array also contains data movers for accessing L3 memory (shim DMAs) and larger L2 scratchpads (mem tiles), which have been available since the AIE-ML generation — see <a href="../">the introduction of this programming guide</a>. Shim DMAs typically occupy row 0; mem tiles (when available) often reside on row 1. In IRON, you usually let the compiler place these, but you can also pin them explicitly. The following snippet shows pinned <code>Tile(col, row)</code> declarations covering all the tile types found in a single NPU column:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">aie.iron.device</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tile</span>
@@ -3726,7 +3817,7 @@ Finally we wrap everything in a <code>Program</code>, passing the Worker via <co
 <li>
 <p>Restore the Worker tile to <code>(0, 2)</code>. Remove the <code>while_true=False</code> argument, regenerate <code>aie.mlir</code>, and inspect it. What changed in the MLIR?
     <details markdown="1"><summary>Show answer</summary>
-    The core body is now nested inside an <code>scf.for</code> that bounds to <code>sys.maxsize</code> — the simulated while-true wrapper.
+    The core body is now nested inside an <code>scf.while</code> whose condition is a constant <code>true</code> — the while-true wrapper.
     </details></p>
 </li>
 </ol>
