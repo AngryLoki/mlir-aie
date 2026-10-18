@@ -1,0 +1,42 @@
+{
+ "schema": 1,
+ "target": "router",
+ "metrics": [
+  "amsels_per_design",
+  "failed_mutations",
+  "failed_properties",
+  "hop_ratio",
+  "illegal",
+  "ms_per_design",
+  "survived_corruptions",
+  "unrouted"
+ ],
+ "runs": [
+  {
+   "schema": 1,
+   "target": "router",
+   "id": "39110166870",
+   "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39110166870",
+   "date": "2026-10-18T08:06:21+00:00",
+   "commit": {
+    "id": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "url": "https://github.com/Xilinx/mlir-aie/commit/0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "message": "IRON follow-ups: q4nx_unpack, quiet aiecc remarks, CompletionCores in a cpuset (#3926)",
+    "timestamp": "2026-10-16T19:35:01Z"
+   },
+   "event": "schedule",
+   "pmode": null,
+   "device": null,
+   "device_raw": null,
+   "provenance": {
+    "commit": "0094b28c34"
+   },
+   "sane": true,
+   "published": true,
+   "n_rows": 24,
+   "exitstatus": 0,
+   "failed": [],
+   "truncated": []
+  }
+ ]
+}
