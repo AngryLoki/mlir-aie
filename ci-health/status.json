@@ -1,0 +1,487 @@
+{
+ "schema": 1,
+ "generated_at": "2026-10-18T05:09:46+00:00",
+ "repo": "AngryLoki/mlir-aie",
+ "window_days": 14,
+ "critical": [
+  {
+   "file": "buildAndTestRyzenAI.yml",
+   "title": "Linux hardware tests",
+   "every": 24,
+   "legs": true,
+   "why": "lit and IRON tests on npu1 and npu2; the only hardware test of main",
+   "runs": 1,
+   "main": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "latest_main": null,
+   "newest_main": {
+    "id": 39088314226,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39088314226",
+    "status": "queued",
+    "conclusion": null,
+    "created_at": "2026-10-18T01:57:05Z",
+    "run_started_at": "2026-10-18T01:57:05Z",
+    "updated_at": "2026-10-18T01:57:05Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Build and Test with AIE tools on Ryzen AI",
+    "attempt": 1
+   },
+   "latest_main_jobs": null,
+   "main_runs": [],
+   "pull_requests": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "merge_queue": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "flaky": {
+    "commits": 0,
+    "flaky": 0,
+    "rate": null
+   },
+   "minutes_median": null,
+   "minutes_p90": null,
+   "queued_median": null
+  },
+  {
+   "file": "buildAndTestRyzenAIWindows.yml",
+   "title": "Windows hardware tests",
+   "every": 24,
+   "legs": true,
+   "why": "the same on a Windows Strix Halo machine",
+   "runs": 1,
+   "main": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "latest_main": null,
+   "newest_main": {
+    "id": 39088313923,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39088313923",
+    "status": "queued",
+    "conclusion": null,
+    "created_at": "2026-10-18T01:57:05Z",
+    "run_started_at": "2026-10-18T01:57:05Z",
+    "updated_at": "2026-10-18T01:57:05Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Build and Test with AIE tools on Ryzen AI (Windows)",
+    "attempt": 1
+   },
+   "latest_main_jobs": null,
+   "main_runs": [],
+   "pull_requests": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "merge_queue": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "flaky": {
+    "commits": 0,
+    "flaky": 0,
+    "rate": null
+   },
+   "minutes_median": null,
+   "minutes_p90": null,
+   "queued_median": null
+  },
+  {
+   "file": "buildAndTestMulti.yml",
+   "title": "Compile across platforms",
+   "every": 24,
+   "legs": false,
+   "why": "compilers, assertions and RTTI on Linux and Windows",
+   "runs": 2,
+   "main": {
+    "passed": 2,
+    "failed": 0,
+    "rate": 1.0
+   },
+   "latest_main": {
+    "id": 39088165225,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39088165225",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-10-18T01:54:32Z",
+    "run_started_at": "2026-10-18T01:54:32Z",
+    "updated_at": "2026-10-18T02:02:09Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Compile across platforms",
+    "attempt": 1
+   },
+   "newest_main": {
+    "id": 39088165225,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39088165225",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-10-18T01:54:32Z",
+    "run_started_at": "2026-10-18T01:54:32Z",
+    "updated_at": "2026-10-18T02:02:09Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Compile across platforms",
+    "attempt": 1
+   },
+   "latest_main_jobs": null,
+   "main_runs": [
+    {
+     "id": 39088165225,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39088165225",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-18T01:54:32Z",
+     "run_started_at": "2026-10-18T01:54:32Z",
+     "updated_at": "2026-10-18T02:02:09Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "Compile across platforms",
+     "attempt": 1
+    },
+    {
+     "id": 39063286915,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39063286915",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-17T19:37:47Z",
+     "run_started_at": "2026-10-17T19:37:47Z",
+     "updated_at": "2026-10-17T20:01:40Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "IRON follow-ups: q4nx_unpack, quiet aiecc remarks, CompletionCores in\u2026",
+     "attempt": 1
+    }
+   ],
+   "pull_requests": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "merge_queue": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "flaky": {
+    "commits": 0,
+    "flaky": 0,
+    "rate": null
+   },
+   "minutes_median": 7.6,
+   "minutes_p90": 23.9,
+   "queued_median": 0.0
+  },
+  {
+   "file": "buildAndTestPythons.yml",
+   "title": "Python versions",
+   "every": 24,
+   "legs": false,
+   "why": "the tests on each supported Python",
+   "runs": 2,
+   "main": {
+    "passed": 2,
+    "failed": 0,
+    "rate": 1.0
+   },
+   "latest_main": {
+    "id": 39090517556,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39090517556",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-10-18T02:33:30Z",
+    "run_started_at": "2026-10-18T02:33:30Z",
+    "updated_at": "2026-10-18T02:40:58Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Build and Test across Python versions",
+    "attempt": 1
+   },
+   "newest_main": {
+    "id": 39090517556,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39090517556",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-10-18T02:33:30Z",
+    "run_started_at": "2026-10-18T02:33:30Z",
+    "updated_at": "2026-10-18T02:40:58Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Build and Test across Python versions",
+    "attempt": 1
+   },
+   "latest_main_jobs": null,
+   "main_runs": [
+    {
+     "id": 39090517556,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39090517556",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-18T02:33:30Z",
+     "run_started_at": "2026-10-18T02:33:30Z",
+     "updated_at": "2026-10-18T02:40:58Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "Build and Test across Python versions",
+     "attempt": 1
+    },
+    {
+     "id": 39063286993,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39063286993",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-17T19:37:48Z",
+     "run_started_at": "2026-10-17T19:37:48Z",
+     "updated_at": "2026-10-17T19:59:17Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "IRON follow-ups: q4nx_unpack, quiet aiecc remarks, CompletionCores in\u2026",
+     "attempt": 1
+    }
+   ],
+   "pull_requests": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "merge_queue": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "flaky": {
+    "commits": 0,
+    "flaky": 0,
+    "rate": null
+   },
+   "minutes_median": 7.5,
+   "minutes_p90": 21.5,
+   "queued_median": 0.0
+  },
+  {
+   "file": "lintAndFormat.yml",
+   "title": "Lint and format",
+   "every": 24,
+   "legs": false,
+   "why": "clang-tidy, pyright and the docs checks",
+   "runs": 1,
+   "main": {
+    "passed": 1,
+    "failed": 0,
+    "rate": 1.0
+   },
+   "latest_main": {
+    "id": 39094363997,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39094363997",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-10-18T03:39:00Z",
+    "run_started_at": "2026-10-18T03:39:00Z",
+    "updated_at": "2026-10-18T03:41:18Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Lint and Format",
+    "attempt": 1
+   },
+   "newest_main": {
+    "id": 39094363997,
+    "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39094363997",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-10-18T03:39:00Z",
+    "run_started_at": "2026-10-18T03:39:00Z",
+    "updated_at": "2026-10-18T03:41:18Z",
+    "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+    "title": "Lint and Format",
+    "attempt": 1
+   },
+   "latest_main_jobs": null,
+   "main_runs": [
+    {
+     "id": 39094363997,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39094363997",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-18T03:39:00Z",
+     "run_started_at": "2026-10-18T03:39:00Z",
+     "updated_at": "2026-10-18T03:41:18Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "Lint and Format",
+     "attempt": 1
+    }
+   ],
+   "pull_requests": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "merge_queue": {
+    "passed": 0,
+    "failed": 0,
+    "rate": null
+   },
+   "flaky": {
+    "commits": 0,
+    "flaky": 0,
+    "rate": null
+   },
+   "minutes_median": 2.3,
+   "minutes_p90": 2.3,
+   "queued_median": 0.0
+  }
+ ],
+ "merge_time": {
+  "merged": 0,
+  "hours_median": null,
+  "hours_p90": null,
+  "open": 0,
+  "open_drafts": 0,
+  "open_over_30_days": 0
+ },
+ "workflows": [
+  {
+   "file": "nightlyKernelChecks.yml",
+   "title": "Kernel checks",
+   "every": 24,
+   "legs": true,
+   "why": "the Kernels section's numbers; a leg that found no runner publishes nothing",
+   "runs": [],
+   "jobs": null
+  },
+  {
+   "file": "nightlyComponentChecks.yml",
+   "title": "Placement and performance checks",
+   "every": 24,
+   "legs": true,
+   "why": "the Performance and Placement sections' numbers",
+   "runs": [],
+   "jobs": null
+  },
+  {
+   "file": "modelBasedTests.yml",
+   "title": "Model-based tests",
+   "every": 24,
+   "legs": true,
+   "why": "the buffer allocator and the packet router against their models at many times check-aie's scale; the Routing and Placement sections' numbers",
+   "runs": [],
+   "jobs": null
+  },
+  {
+   "file": "buildRyzenWheels.yml",
+   "title": "Ryzen AI wheels",
+   "every": 24,
+   "legs": true,
+   "why": "refreshes the latest-wheels releases users install from",
+   "runs": [],
+   "jobs": null
+  },
+  {
+   "file": "mlirDistro.yml",
+   "title": "MLIR distro from LLVM head",
+   "every": 4,
+   "why": "early warning that upstream LLVM broke the build",
+   "runs": [
+    {
+     "id": 39088946569,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39088946569",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-18T02:07:20Z",
+     "run_started_at": "2026-10-18T02:07:20Z",
+     "updated_at": "2026-10-18T02:49:50Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "MLIR Distro",
+     "attempt": 1
+    },
+    {
+     "id": 39072741864,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39072741864",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-17T21:52:20Z",
+     "run_started_at": "2026-10-17T21:52:20Z",
+     "updated_at": "2026-10-18T02:22:40Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "MLIR Distro",
+     "attempt": 1
+    }
+   ],
+   "jobs": null
+  },
+  {
+   "file": "pruneReleaseAssets.yml",
+   "title": "Prune release assets",
+   "every": 24,
+   "why": "keeps dev-wheels under 1,000 assets; when it stops, PR wheel uploads fail",
+   "runs": [],
+   "jobs": null
+  },
+  {
+   "file": "buildAndTestRyzenAISw.yml",
+   "title": "Ryzen AI Software build",
+   "every": 24,
+   "why": "the Docker build against Ryzen AI Software",
+   "runs": [
+    {
+     "id": 39092561855,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39092561855",
+     "status": "completed",
+     "conclusion": "failure",
+     "created_at": "2026-10-18T03:08:23Z",
+     "run_started_at": "2026-10-18T03:08:23Z",
+     "updated_at": "2026-10-18T03:11:40Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "Build and Test with Ryzen AI Sofware",
+     "attempt": 1
+    }
+   ],
+   "jobs": null
+  },
+  {
+   "file": "codeCoverage.yml",
+   "title": "Code coverage",
+   "every": 24,
+   "why": "the coverage report, as an artifact",
+   "runs": [
+    {
+     "id": 39087346555,
+     "url": "https://github.com/AngryLoki/mlir-aie/actions/runs/39087346555",
+     "status": "completed",
+     "conclusion": "success",
+     "created_at": "2026-10-18T01:40:34Z",
+     "run_started_at": "2026-10-18T01:40:34Z",
+     "updated_at": "2026-10-18T02:14:08Z",
+     "head_sha": "0094b28c3470f7774ff690e5ccc85e54159bfca8",
+     "title": "Code Coverage",
+     "attempt": 1
+    }
+   ],
+   "jobs": null
+  },
+  {
+   "file": "update-llvm.yml",
+   "title": "LLVM bump",
+   "every": 384,
+   "why": "opens the LLVM bump pull request on the 1st and 15th",
+   "runs": [],
+   "jobs": null
+  },
+  {
+   "file": "update-peano.yml",
+   "title": "Peano bump",
+   "every": 168,
+   "why": "opens the Peano bump pull request each Monday",
+   "runs": [],
+   "jobs": null
+  },
+  {
+   "file": "scorecard.yml",
+   "title": "OpenSSF Scorecard",
+   "every": 168,
+   "why": "the supply-chain scan, to the Security tab",
+   "runs": [],
+   "jobs": null
+  }
+ ]
+}
